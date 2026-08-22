@@ -258,16 +258,26 @@ Fusing vector + full-text server-side (RRF or similar) is a legitimate v2 enhanc
 
 ```
 ragit/
+  ragitschema/  // the schema declaration — the source of truth for migrations and models
+  cmd/ragit-gen // renders migrations/ and the *_gen.go models from it
   extract/      // Extractor interface; xberg (sidecar) + isolated-child-process + raw-parser fallback chain (§6)
   ocr/          // OCREngine interface: xberg-local (Tesseract/Candle, CPU) + EdenAI universal OCR; off by default (§5)
   chunk/        // markdown-header-aware + recursive-character chunker, Go-owned (§5)
   embed/        // single OpenAI-wire-compatible client (default: EdenAI), fingerprint + alignment guard (§5, §8)
-  store/        // S3 client wrapper (put/get, presigned URLs, tenant-prefixed keys)
-  db/           // sqlc-generated queries + migrations (documents, chunks)
-  jobs/         // River: one resumable DocumentProcessWorker (§7), DocumentDeleteWorker, retention-cleanup worker
-  search/       // vector search + full-text search (separate queries, §9), scope-cascade support
-  ragit.go      // façade: Ingest(ctx, tenant, file) / Search(ctx, tenant, query) / VectorSearch / FullTextSearch
+  store/        // S3 client wrapper (put/get/delete, tenant-prefixed keys)
+  migrations/   // generated goose files, embedded; applied by ragit.Migrate into ragit_migrations
+  jobs/         // River: one resumable ProcessDocumentWorker (§7), DeleteDocumentWorker, DeleteExpiredWorker
+  ragit.go      // Processor: CreateDocument / ProcessDocument / Ingest / Delete
+  scope.go      // Scope — confinement, whose zero value matches no rows
+  search.go     // VectorSearch + FullTextSearch (separate queries, §9)
+  catalog.go    // GetDocument / ListDocuments / CountDocuments / ListChunks
+  events.go     // EventSink, fired on every terminal state
+  models_gen.go // generated: ragit.Document, ragit.Chunk — exported deliberately
 ```
+
+`search/` is not a separate package: it would import the `Scope` type from the
+root while the root imported it back, and the generated models it queries live
+in the root anyway.
 
 Each SaaS project imports `ragit`, provides its own Postgres pool / S3 client / River client / config (xberg URL — optional, degrades gracefully per §4 — embedding base URL/key, OCR enabled + backend per tenant, chunk size, min-score threshold per model), and gets ingestion + retrieval as a small set of calls.
 
@@ -294,6 +304,17 @@ Settled during implementation (Phase 3):
 - **`COPY FROM` is incompatible with RLS.** PostgreSQL rejects it outright (`COPY FROM not supported with row-level security`), so chunk inserts use a pgx batch (`:batchexec`) rather than sqlc's `:copyfrom`. At `embedBatchSize` rows per call this costs nothing — both are one round-trip.
 - **The `search_vector` column uses the `'simple'` text-search config**, matching the `websearch_to_tsquery('simple', ...)` used at query time. An `'english'` column queried with a `'simple'` query stores stemmed lexemes and matches unstemmed terms against them, which under-matches silently rather than erroring.
 - **Vector search filters on `embedding_fingerprint`.** Chunks embedded in a different embedding space are excluded rather than ranked — cosine distance across models is not a weaker signal but a meaningless one. `Searcher.CountMisalignedChunks` makes the straddled state detectable instead of silent; what to do about it (refuse to serve vs. serve degraded) is left to the host application.
+
+Settled during implementation (Phase 5 — the sqlb port):
+
+- **The data layer is [sqlb](https://github.com/jryannel/sqlb), not sqlc + goose-authored SQL.** The deciding argument was not consistency but that two of ragit's hardest properties stop depending on care: the embedding dimension becomes `schema.Vector(name, dim)` — a value passed in rather than a literal in a shipped `.sql` file a consumer would have to fork — and confinement becomes a type rather than a `WHERE` clause every call site must remember. The schema is declared once in `ragitschema` and **migrations, models and the typed column facade are all generated from it** by `cmd/ragit-gen`.
+- **goose survives as the migration *runner*.** sqlb renders goose-format files, so ragit keeps everything §11's earlier entry settled — embedded migrations, its own `ragit_migrations` version table, `ragit.Migrate` — while sqlb owns the declaration and the diff. `schema.NewModule("ragit")` applies the `ragit_` prefix at the registry rather than in each declaration, which is sqlb's own answer to the same collision problem.
+- **Two things sqlb deliberately does not model, and both stay hand-written.** Its schema DSL has no row-level security, and its `Searchable` capability compiles to `ILIKE '%…%'` — not ranked, and unable to express `websearch_to_tsquery`'s grammar. So the RLS policies and the generated `tsvector` column are composed as `migrate.Change` values and rendered through the same pipeline (marked `Handwritten`, so the file does not claim to be something sqlb's emitters produced), and full-text search uses `sqlb.Raw`. RLS is kept rather than replaced by sqlb's `BeforeQuery` hooks: the hook constrains every query the engine builds, RLS constrains everything else — a raw pgx call, a psql session, a query written later against these tables. Neither layer subsumes the other.
+- **Scope is a pair of generic columns, and confinement is a required type.** `scope_a_id` and `scope_b_id` replace the single `scope_id`: one column cannot express a pair whose halves have independent lifecycles (a corpus scoped by company *and* by an author whose material follows them across companies). ragit does not know what they mean; a host application maps its own domain onto them. Every read takes a `Scope` whose **zero value matches no rows**, every dimension is restrictive unless named, an explicitly empty permitted set matches nothing rather than everything, and unbounded access is a separate predicate (`AnyA()`) rather than a sentinel value in the column — a sentinel is one careless equality away from being treated as a real scope, and that failure is silent.
+- **`gen_random_uuid()`, not sqlb's default UUIDv7.** A time-ordered key has better index locality and would be the better choice in an application, but it needs PostgreSQL 18's built-in `uuidv7()` or the `pg_uuidv7` extension. ragit is dropped into a database it does not control, so it takes the version floor that asks least — `gen_random_uuid()` is built in from PostgreSQL 13. It is a column default, so a deployment can regenerate with `migrate.MinPostgres(18)` without touching existing rows.
+- **`search/` was folded into the root package.** §10's separate package would have imported the shared `Scope` type from the root while the root imported it back. The generated models live in the root package anyway, so the queries over them do too.
+- **The public read surface is the generated models.** `ragit.Document` and `ragit.Chunk` are exported, and `GetDocument`/`ListDocuments`/`CountDocuments`/`ListChunks` answer the catalog questions (what is indexed, is it still processing, why did it fail). A read ragit does not offer can be written with sqlb directly rather than being walled off behind an internal package — which is the half of the split-ownership problem the migration story did not already solve.
+- **Indexing publishes an event.** An optional `EventSink` fires after the chunks are committed, on *every* terminal state rather than only success — a document that failed is exactly the case its uploader needs told about. Its error is ignored and a panic is recovered: the indexing already happened and was already paid for, so a subscriber must not be able to undo it.
 
 Still open before implementation:
 - Whether the nested-scope cascade (§8) is needed at launch for the first `ragit`-using project, or whether the reserved columns keep sitting unused.

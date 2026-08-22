@@ -6,18 +6,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jryannel/sqlb"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/internal/db"
-	"github.com/jryannel/ragit/internal/testutil"
-	"github.com/jryannel/ragit/search"
 )
 
 func TestDeleteDocument_PurgesStoredBytes(t *testing.T) {
-	h := newSearchHarness(t, "acme")
-	tenantID := uuid.New()
+	h := newHarness(t, "acme")
+	tenantID := uuid.NewString()
 
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
@@ -25,19 +22,19 @@ func TestDeleteDocument_PurgesStoredBytes(t *testing.T) {
 	})
 	require.Equal(t, 1, h.store.Len())
 
-	require.NoError(t, h.processor.DeleteDocument(context.Background(), doc.ID, tenantID))
+	ctx := context.Background()
+	require.NoError(t, h.processor.DeleteDocument(ctx, tenantID, doc.ID))
+	require.Zero(t, h.store.Len(), "the bytes must go with the row, not linger in object storage")
 
-	require.Zero(t, h.store.Len(), "the original bytes must go with the row, not linger in object storage")
-
-	results, err := h.processor.VectorSearch(context.Background(), tenantID, "postgres", search.Options{TopK: 5})
+	results, err := h.processor.VectorSearch(ctx, ragit.Tenant(tenantID), "postgres", ragit.SearchOptions{TopK: 5})
 	require.NoError(t, err)
 	require.Empty(t, results, "chunks cascade with the document")
 }
 
 func TestDeleteExpired_RemovesOnlyExpiredDocuments(t *testing.T) {
-	h := newSearchHarness(t, "acme")
-	tenantID := uuid.New()
-	sessionID := uuid.New()
+	h := newHarness(t, "acme")
+	tenantID := uuid.NewString()
+	sessionID := uuid.NewString()
 
 	past := time.Now().Add(-time.Hour)
 	future := time.Now().Add(time.Hour)
@@ -58,24 +55,31 @@ func TestDeleteExpired_RemovesOnlyExpiredDocuments(t *testing.T) {
 	})
 	require.Equal(t, 3, h.store.Len())
 
-	result, err := h.processor.DeleteExpired(context.Background())
+	ctx := context.Background()
+	result, err := h.processor.DeleteExpired(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Documents)
 	require.Empty(t, result.ObjectErrors)
-
-	// The expired attachment is gone, bytes included.
 	require.Equal(t, 2, h.store.Len())
-	requireDocumentAbsent(t, h, tenantID, expired.ID)
+
+	sessionScope := ragit.Tenant(tenantID).Session(sessionID)
+	_, err = h.processor.GetDocument(ctx, sessionScope, expired.ID)
+	require.ErrorIs(t, err, ragit.ErrNotFound)
 
 	// A clock that has not run out, and a document with no clock at all, are
 	// both untouched — "expires_at IS NULL" must never mean "expired".
-	require.Equal(t, "ready", getDoc(t, h.pool, tenantID, notYet.ID).Status)
-	require.Equal(t, "ready", getDoc(t, h.pool, tenantID, durable.ID).Status)
+	live, err := h.processor.GetDocument(ctx, sessionScope, notYet.ID)
+	require.NoError(t, err)
+	require.Equal(t, ragit.StatusReady, live.Status)
+
+	kept, err := h.processor.GetDocument(ctx, ragit.Tenant(tenantID), durable.ID)
+	require.NoError(t, err)
+	require.Equal(t, ragit.StatusReady, kept.Status)
 }
 
 func TestDeleteExpired_SweepsAcrossTenants(t *testing.T) {
-	h := newSearchHarness(t, "acme")
-	tenantA, tenantB := uuid.New(), uuid.New()
+	h := newHarness(t, "acme")
+	tenantA, tenantB := uuid.NewString(), uuid.NewString()
 	past := time.Now().Add(-time.Hour)
 
 	docA := h.ingest(t, ragit.DocumentInput{
@@ -87,21 +91,23 @@ func TestDeleteExpired_SweepsAcrossTenants(t *testing.T) {
 		Filename: "b.md", MimeType: "text/markdown", Data: []byte("Postgres for tenant B."),
 	})
 
-	// The sweep cannot enumerate the tenants owning expired rows without
-	// first reading across tenants, which is why it runs under the
-	// maintenance scope rather than a tenant scope.
-	result, err := h.processor.DeleteExpired(context.Background())
+	// The sweep cannot enumerate the tenants owning expired rows without first
+	// reading across tenants, which is why it runs under the maintenance scope.
+	ctx := context.Background()
+	result, err := h.processor.DeleteExpired(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, result.Documents)
 
-	requireDocumentAbsent(t, h, tenantA, docA.ID)
-	requireDocumentAbsent(t, h, tenantB, docB.ID)
+	_, err = h.processor.GetDocument(ctx, ragit.Tenant(tenantA), docA.ID)
+	require.ErrorIs(t, err, ragit.ErrNotFound)
+	_, err = h.processor.GetDocument(ctx, ragit.Tenant(tenantB), docB.ID)
+	require.ErrorIs(t, err, ragit.ErrNotFound)
 	require.Zero(t, h.store.Len())
 }
 
 func TestDeleteExpired_IsIdempotent(t *testing.T) {
-	h := newSearchHarness(t, "acme")
-	tenantID := uuid.New()
+	h := newHarness(t, "acme")
+	tenantID := uuid.NewString()
 	past := time.Now().Add(-time.Hour)
 
 	h.ingest(t, ragit.DocumentInput{
@@ -109,13 +115,14 @@ func TestDeleteExpired_IsIdempotent(t *testing.T) {
 		Filename: "a.md", MimeType: "text/markdown", Data: []byte("Postgres."),
 	})
 
-	first, err := h.processor.DeleteExpired(context.Background())
+	ctx := context.Background()
+	first, err := h.processor.DeleteExpired(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, first.Documents)
 
 	// A scheduled sweep runs constantly against a corpus that is usually
 	// clean; the empty case must be cheap and silent, not an error.
-	second, err := h.processor.DeleteExpired(context.Background())
+	second, err := h.processor.DeleteExpired(ctx)
 	require.NoError(t, err)
 	require.Zero(t, second.Documents)
 	require.Zero(t, second.Chunks)
@@ -126,75 +133,79 @@ func TestDeleteExpired_IsIdempotent(t *testing.T) {
 // processing time. This sweeps the case the FK cascade cannot: a chunk whose
 // clock has run out while its document's has not.
 func TestDeleteExpired_RemovesExpiredChunksWhoseDocumentLives(t *testing.T) {
-	h := newSearchHarness(t, "acme")
-	tenantID := uuid.New()
+	h := newHarness(t, "acme")
+	tenantID := uuid.NewString()
 
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "library.md", MimeType: "text/markdown",
 		Data: []byte("Postgres in the durable library."),
 	})
 
-	// Expire the chunks alone, leaving the document with no clock at all.
-	// The UPDATE has to run inside the tenant transaction: issued straight at
-	// the pool it would match zero rows, because RLS is doing its job.
-	execInTenant(t, h.pool, tenantID,
-		"UPDATE ragit_chunks SET expires_at = now() - interval '1 hour' WHERE document_id = $1", doc.ID)
+	// The UPDATE runs inside the tenant transaction: issued straight at the
+	// pool it would match zero rows, because RLS is doing its job.
+	ctx := context.Background()
+	require.NoError(t, ragit.WithTenant(ctx, h.pool, tenantID, func(db sqlb.Executor) error {
+		tag, err := db.Exec(ctx,
+			"UPDATE ragit_chunks SET expires_at = now() - interval '1 hour' WHERE document_id = $1", doc.ID)
+		require.NoError(t, err)
+		require.Positive(t, tag.RowsAffected(), "test setup affected no rows")
+		return nil
+	}))
 
-	result, err := h.processor.DeleteExpired(context.Background())
+	result, err := h.processor.DeleteExpired(ctx)
 	require.NoError(t, err)
 	require.Zero(t, result.Documents, "the document has no clock and must survive")
 	require.Positive(t, result.Chunks)
 
-	require.Equal(t, "ready", getDoc(t, h.pool, tenantID, doc.ID).Status)
-	require.Empty(t, getChunks(t, h.pool, tenantID, doc.ID))
+	kept, err := h.processor.GetDocument(ctx, ragit.Tenant(tenantID), doc.ID)
+	require.NoError(t, err)
+	require.Equal(t, ragit.StatusReady, kept.Status)
+
+	chunks, err := h.processor.ListChunks(ctx, ragit.Tenant(tenantID), doc.ID)
+	require.NoError(t, err)
+	require.Empty(t, chunks)
 	require.Equal(t, 1, h.store.Len(), "the surviving document keeps its bytes")
 }
 
-// The maintenance escape widens reads and deletes only. Migration 00003
-// leaves WITH CHECK tenant-scoped precisely so no maintenance path can write
+// The maintenance escape widens reads and deletes only. The policies' WITH
+// CHECK clause stays tenant-scoped precisely so no maintenance path can write
 // a row into a tenant it is not scoped to.
 func TestMaintenanceScope_CannotWriteAcrossTenants(t *testing.T) {
-	pool := testutil.SetupTestPool(t)
+	pool := newHarnessPool(t)
 	ctx := context.Background()
 
-	err := db.WithMaintenance(ctx, pool, func(q *db.Queries) error {
-		_, err := q.CreateDocument(ctx, db.CreateDocumentParams{
-			TenantID: uuid.New(),
-			Filename: "smuggled.md",
-			MimeType: "text/markdown",
-		})
+	err := ragit.WithMaintenance(ctx, pool, func(db sqlb.Executor) error {
+		_, err := db.Exec(ctx,
+			"INSERT INTO ragit_documents (tenant_id, filename, mime_type) VALUES ($1, $2, $3)",
+			uuid.NewString(), "smuggled.md", "text/markdown")
 		return err
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "row-level security")
 }
 
-// execInTenant runs raw SQL inside a tenant-scoped transaction, for test
-// setup that has no sqlc query of its own.
-func execInTenant(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID, sql string, args ...any) {
-	t.Helper()
-	ctx := context.Background()
+// TestRLS_FailsClosedWithoutTenantScope pins down the property the WithTenant
+// plumbing exists for. It is deliberately a database-level test: the risk is a
+// future query issued outside WithTenant, which no API-level test would catch.
+func TestRLS_FailsClosedWithoutTenantScope(t *testing.T) {
+	h := newHarness(t, "acme")
+	tenantID := uuid.NewString()
 
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	_, err = tx.Exec(ctx, "SELECT set_config($1, $2, true)", db.TenantGUC, tenantID.String())
-	require.NoError(t, err)
-
-	tag, err := tx.Exec(ctx, sql, args...)
-	require.NoError(t, err)
-	require.Positive(t, tag.RowsAffected(), "test setup affected no rows")
-	require.NoError(t, tx.Commit(ctx))
-}
-
-func requireDocumentAbsent(t *testing.T, h *searchHarness, tenantID, documentID uuid.UUID) {
-	t.Helper()
-	err := db.WithTenant(context.Background(), h.pool, tenantID, func(q *db.Queries) error {
-		_, err := q.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{
-			ID: documentID, TenantID: tenantID,
-		})
-		return err
+	doc := h.ingest(t, ragit.DocumentInput{
+		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
+		Data: []byte("Postgres stores relational data durably."),
 	})
-	require.Error(t, err, "document %s should have been swept", documentID)
+
+	ctx := context.Background()
+	scoped, err := h.processor.ListChunks(ctx, ragit.Tenant(tenantID), doc.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, scoped)
+
+	// Outside a tenant transaction — the GUC never set — the policy evaluates
+	// to NULL and the rows vanish rather than being exposed.
+	var docs, chunks int
+	require.NoError(t, h.pool.QueryRow(ctx, "SELECT count(*) FROM ragit_documents").Scan(&docs))
+	require.NoError(t, h.pool.QueryRow(ctx, "SELECT count(*) FROM ragit_chunks").Scan(&chunks))
+	require.Zero(t, docs, "RLS must fail closed when no tenant scope is set")
+	require.Zero(t, chunks)
 }

@@ -14,7 +14,6 @@ package jobs
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 )
 
@@ -27,8 +26,8 @@ const RateLimitBackoff = 5 * time.Minute
 // are namespaced ("ragit_...") to avoid colliding with a host app's own job
 // kinds/queues in the same River client.
 type ProcessDocumentArgs struct {
-	DocumentID uuid.UUID `json:"document_id"`
-	TenantID   uuid.UUID `json:"tenant_id"`
+	DocumentID string `json:"document_id"`
+	TenantID   string `json:"tenant_id"`
 }
 
 func (ProcessDocumentArgs) Kind() string { return "ragit_process_document" }
@@ -39,8 +38,8 @@ func (ProcessDocumentArgs) InsertOpts() river.InsertOpts {
 
 // DeleteDocumentArgs identifies which document to delete.
 type DeleteDocumentArgs struct {
-	DocumentID uuid.UUID `json:"document_id"`
-	TenantID   uuid.UUID `json:"tenant_id"`
+	DocumentID string `json:"document_id"`
+	TenantID   string `json:"tenant_id"`
 }
 
 func (DeleteDocumentArgs) Kind() string { return "ragit_delete_document" }

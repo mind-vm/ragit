@@ -1,4 +1,4 @@
-.PHONY: test test-fast test-pg lint fmt sqlc migrate-up migrate-down migrate-status
+.PHONY: test test-fast test-pg lint fmt generate migrate-up migrate-down migrate-status
 
 test:
 	go test ./...
@@ -8,7 +8,7 @@ test-fast:
 
 # Requires Docker (testcontainers boots a pgvector-enabled Postgres).
 test-pg:
-	go test -count=1 -run 'TestIngest|TestProcessDocument|TestVectorSearch|TestFullTextSearch|TestSearch_|TestRLS|TestMoveDocumentScope' -v ./...
+	go test -count=1 -run 'TestIngest|TestProcessDocument|TestVectorSearch|TestFullTextSearch|TestSearch_|TestRLS|TestMoveDocumentScope|TestDeleteExpired|TestMigrate' -v ./...
 
 lint:
 	golangci-lint run ./...
@@ -16,8 +16,9 @@ lint:
 fmt:
 	go fmt ./...
 
-sqlc:
-	sqlc generate
+# Regenerates migrations/ and the *_gen.go models from ragitschema.
+generate:
+	go run ./cmd/ragit-gen
 
 # Applications should call ragit.Migrate() rather than shelling out to goose:
 # the migrations are embedded in the binary and tracked in ragit's own

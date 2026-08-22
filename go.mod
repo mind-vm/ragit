@@ -5,10 +5,9 @@ go 1.25.7
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jryannel/sqlb v0.15.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/minio/minio-go/v7 v7.3.0
-	github.com/pgvector/pgvector-go v0.4.1
-	github.com/pgvector/pgvector-go/pgx v0.4.1
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/riverqueue/river v0.44.1
 	github.com/stretchr/testify v1.12.1
@@ -74,7 +73,6 @@ require (
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
-	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

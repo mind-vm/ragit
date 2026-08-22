@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-
-	"github.com/google/uuid"
 )
 
 // ErrNotFound is returned by Get and Delete when no object exists at a URI.
@@ -19,7 +17,7 @@ var ErrNotFound = errors.New("store: object not found")
 type Store interface {
 	// Put uploads data under a tenant-prefixed key and returns the URI it
 	// was stored at.
-	Put(ctx context.Context, tenantID uuid.UUID, filename string, data []byte, mimeType string) (uri string, err error)
+	Put(ctx context.Context, tenantID string, filename string, data []byte, mimeType string) (uri string, err error)
 	// Get retrieves the object at uri. The caller must close the reader.
 	Get(ctx context.Context, uri string) (io.ReadCloser, error)
 	// Delete removes the object at uri. It is idempotent: deleting a URI

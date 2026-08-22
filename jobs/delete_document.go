@@ -20,5 +20,5 @@ func NewDeleteDocumentWorker(processor *ragit.Processor) *DeleteDocumentWorker {
 }
 
 func (w *DeleteDocumentWorker) Work(ctx context.Context, job *river.Job[DeleteDocumentArgs]) error {
-	return w.processor.DeleteDocument(ctx, job.Args.DocumentID, job.Args.TenantID)
+	return w.processor.DeleteDocument(ctx, job.Args.TenantID, job.Args.DocumentID)
 }
