@@ -6,14 +6,19 @@
 // Worth revisiting (e.g. a template-database clone-per-test, for full
 // parallelism) if the suite grows enough for truncation contention to
 // matter — not needed at this scale.
+//
+// Tests connect as a deliberately unprivileged role, not as the superuser
+// the postgres image creates. That is load-bearing rather than tidiness:
+// PostgreSQL exempts superusers from row-level security even when the table
+// is FORCE'd, so a suite connecting as the default POSTGRES_USER would see
+// every RLS policy silently do nothing and would pass whether or not tenant
+// isolation actually works.
 package testutil
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -22,21 +27,31 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	pgxvector "github.com/pgvector/pgvector-go/pgx"
-	"github.com/pressly/goose/v3"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/jryannel/ragit/internal/migrate"
+)
+
+// appRole is the unprivileged role tests connect as. It owns nothing and has
+// neither SUPERUSER nor BYPASSRLS, so the policies in migration 00001 apply
+// to it exactly as they would to a production application role.
+const (
+	appRole     = "ragit_app"
+	appPassword = "ragit_app_pw"
 )
 
 var (
-	once     sync.Once
-	connStr  string
-	setupErr error
+	once       sync.Once
+	appConnStr string
+	setupErr   error
 )
 
 // SetupTestPool returns a pgxpool.Pool connected to a shared, migrated
-// Postgres, starting the container on first use. It truncates the
-// documents/chunks tables via t.Cleanup so each test starts clean.
+// Postgres as the unprivileged application role, starting the container on
+// first use. It truncates the ragit tables via t.Cleanup so each test starts
+// clean.
 //
 // Skips under -short, so `go test -short ./...` needs no Docker.
 func SetupTestPool(t *testing.T) *pgxpool.Pool {
@@ -47,31 +62,51 @@ func SetupTestPool(t *testing.T) *pgxpool.Pool {
 	}
 
 	once.Do(func() {
-		connStr, setupErr = startAndMigrate()
+		appConnStr, setupErr = startAndMigrate()
 	})
 	if setupErr != nil {
 		t.Fatalf("testutil: setup shared postgres: %v", setupErr)
 	}
 
-	ctx := context.Background()
-	poolConfig, err := pgxpool.ParseConfig(connStr)
+	pool, err := connect(context.Background(), appConnStr)
 	if err != nil {
-		t.Fatalf("testutil: parse connection string: %v", err)
-	}
-	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		return pgxvector.RegisterTypes(ctx, conn)
-	}
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	if err != nil {
-		t.Fatalf("testutil: connect: %v", err)
+		t.Fatalf("testutil: connect as %s: %v", appRole, err)
 	}
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "TRUNCATE documents CASCADE")
+		// TRUNCATE is a privilege check, not a row-level one, so it is not
+		// filtered by RLS and clears every tenant's rows regardless of which
+		// tenant GUC happens to be set.
+		_, _ = pool.Exec(context.Background(), "TRUNCATE ragit_documents CASCADE")
 		pool.Close()
 	})
 
 	return pool
+}
+
+// connect registers pgvector's types on every connection, which requires the
+// vector extension to already exist — so it is only usable after migrations.
+func connect(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse connection string: %w", err)
+	}
+	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		return pgxvector.RegisterTypes(ctx, conn)
+	}
+	return pgxpool.NewWithConfig(ctx, poolConfig)
+}
+
+// connectBare skips pgvector type registration. The migration pool has to
+// use this: CREATE EXTENSION vector is itself one of the migrations, so a
+// connection that insists on resolving the vector type up front cannot be
+// opened until after it has run.
+func connectBare(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	return pool, nil
 }
 
 func startAndMigrate() (string, error) {
@@ -97,47 +132,49 @@ func startAndMigrate() (string, error) {
 		return "", fmt.Errorf("start postgres container: %w", err)
 	}
 
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	adminConnStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		return "", fmt.Errorf("get connection string: %w", err)
 	}
 
-	migrationsDir, err := findMigrationsDir()
+	adminPool, err := connectBare(ctx, adminConnStr)
 	if err != nil {
+		return "", fmt.Errorf("connect as admin: %w", err)
+	}
+	defer adminPool.Close()
+
+	// Migrations run as the superuser, so it owns the tables; the app role
+	// created below is a plain grantee and RLS therefore applies to it.
+	if err := migrate.Up(ctx, adminPool); err != nil {
+		return "", err
+	}
+	if err := grantAppRole(ctx, adminPool); err != nil {
 		return "", err
 	}
 
-	sqlDB, err := sql.Open("pgx", connStr)
-	if err != nil {
-		return "", fmt.Errorf("open sql.DB: %w", err)
-	}
-	defer func() { _ = sqlDB.Close() }()
-
-	goose.SetLogger(goose.NopLogger())
-	if err := goose.Up(sqlDB, migrationsDir); err != nil {
-		return "", fmt.Errorf("run migrations: %w", err)
-	}
-
-	return connStr, nil
+	return rewriteCredentials(adminConnStr, appRole, appPassword)
 }
 
-// findMigrationsDir walks up from the working directory to locate the
-// module's migrations/ directory — needed because tests run with their
-// package directory as the working directory.
-func findMigrationsDir() (string, error) {
-	dir, err := os.Getwd()
+func grantAppRole(ctx context.Context, pool *pgxpool.Pool) error {
+	stmts := []string{
+		fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD '%s' NOSUPERUSER NOBYPASSRLS", appRole, appPassword),
+		fmt.Sprintf("GRANT USAGE ON SCHEMA public TO %s", appRole),
+		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO %s", appRole),
+		fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s", appRole),
+	}
+	for _, stmt := range stmts {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("grant app role (%q): %w", stmt, err)
+		}
+	}
+	return nil
+}
+
+func rewriteCredentials(connStr, user, password string) (string, error) {
+	u, err := url.Parse(connStr)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse connection url: %w", err)
 	}
-	for {
-		candidate := filepath.Join(dir, "migrations")
-		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
-			return candidate, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("migrations directory not found walking up from working directory")
-		}
-		dir = parent
-	}
+	u.User = url.UserPassword(user, password)
+	return u.String(), nil
 }

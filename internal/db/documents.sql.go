@@ -14,23 +14,27 @@ import (
 )
 
 const createDocument = `-- name: CreateDocument :one
-INSERT INTO documents (
-  tenant_id, source_uri, filename, mime_type
+INSERT INTO ragit_documents (
+  tenant_id, scope_id, session_id, source_uri, filename, mime_type
 ) VALUES (
-  $1, $2, $3, $4
-) RETURNING id, tenant_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at
+  $1, $2, $3, $4, $5, $6
+) RETURNING id, tenant_id, scope_id, session_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at
 `
 
 type CreateDocumentParams struct {
-	TenantID  uuid.UUID `json:"tenant_id"`
-	SourceUri *string   `json:"source_uri"`
-	Filename  string    `json:"filename"`
-	MimeType  string    `json:"mime_type"`
+	TenantID  uuid.UUID  `json:"tenant_id"`
+	ScopeID   *uuid.UUID `json:"scope_id"`
+	SessionID *uuid.UUID `json:"session_id"`
+	SourceUri *string    `json:"source_uri"`
+	Filename  string     `json:"filename"`
+	MimeType  string     `json:"mime_type"`
 }
 
 func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error) {
 	row := q.db.QueryRow(ctx, createDocument,
 		arg.TenantID,
+		arg.ScopeID,
+		arg.SessionID,
 		arg.SourceUri,
 		arg.Filename,
 		arg.MimeType,
@@ -39,6 +43,8 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
+		&i.ScopeID,
+		&i.SessionID,
 		&i.SourceUri,
 		&i.Filename,
 		&i.MimeType,
@@ -56,7 +62,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 }
 
 const deleteDocument = `-- name: DeleteDocument :exec
-DELETE FROM documents WHERE id = $1 AND tenant_id = $2
+DELETE FROM ragit_documents WHERE id = $1 AND tenant_id = $2
 `
 
 type DeleteDocumentParams struct {
@@ -64,14 +70,14 @@ type DeleteDocumentParams struct {
 	TenantID uuid.UUID `json:"tenant_id"`
 }
 
-// Cascades to chunks via the FK in migration 00001.
+// Cascades to ragit_chunks via the FK in migration 00001.
 func (q *Queries) DeleteDocument(ctx context.Context, arg DeleteDocumentParams) error {
 	_, err := q.db.Exec(ctx, deleteDocument, arg.ID, arg.TenantID)
 	return err
 }
 
 const getDocumentByID = `-- name: GetDocumentByID :one
-SELECT id, tenant_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at FROM documents WHERE id = $1 AND tenant_id = $2
+SELECT id, tenant_id, scope_id, session_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at FROM ragit_documents WHERE id = $1 AND tenant_id = $2
 `
 
 type GetDocumentByIDParams struct {
@@ -85,6 +91,8 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
+		&i.ScopeID,
+		&i.SessionID,
 		&i.SourceUri,
 		&i.Filename,
 		&i.MimeType,
@@ -102,7 +110,7 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 }
 
 const updateDocumentError = `-- name: UpdateDocumentError :exec
-UPDATE documents SET
+UPDATE ragit_documents SET
   status = 'error',
   error = $2,
   updated_at = now()
@@ -120,16 +128,21 @@ func (q *Queries) UpdateDocumentError(ctx context.Context, arg UpdateDocumentErr
 }
 
 const updateDocumentProcessing = `-- name: UpdateDocumentProcessing :exec
-UPDATE documents SET status = 'processing', updated_at = now() WHERE id = $1
+
+UPDATE ragit_documents SET status = 'processing', updated_at = now() WHERE id = $1
 `
 
+// The Update* statements below filter on id alone. That is safe because
+// every one of them runs inside a WithTenant transaction, where the
+// ragit_documents RLS policy adds the tenant predicate itself; an id
+// belonging to another tenant matches zero rows.
 func (q *Queries) UpdateDocumentProcessing(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, updateDocumentProcessing, id)
 	return err
 }
 
 const updateDocumentReady = `-- name: UpdateDocumentReady :exec
-UPDATE documents SET
+UPDATE ragit_documents SET
   status = 'ready',
   text_content = $2,
   metadata = $3,
@@ -161,8 +174,29 @@ func (q *Queries) UpdateDocumentReady(ctx context.Context, arg UpdateDocumentRea
 	return err
 }
 
+const updateDocumentScope = `-- name: UpdateDocumentScope :exec
+UPDATE ragit_documents SET
+  scope_id = $2,
+  session_id = $3,
+  updated_at = now()
+WHERE id = $1
+`
+
+type UpdateDocumentScopeParams struct {
+	ID        uuid.UUID  `json:"id"`
+	ScopeID   *uuid.UUID `json:"scope_id"`
+	SessionID *uuid.UUID `json:"session_id"`
+}
+
+// Moves a document between scopes. Callers must follow this with
+// ResyncChunkScope — the chunks' denormalized copies do not self-heal.
+func (q *Queries) UpdateDocumentScope(ctx context.Context, arg UpdateDocumentScopeParams) error {
+	_, err := q.db.Exec(ctx, updateDocumentScope, arg.ID, arg.ScopeID, arg.SessionID)
+	return err
+}
+
 const updateDocumentSkippedTooLarge = `-- name: UpdateDocumentSkippedTooLarge :exec
-UPDATE documents SET
+UPDATE ragit_documents SET
   status = 'skipped_too_large',
   error = $2,
   chunk_count = 0,

@@ -12,18 +12,51 @@ import (
 
 type Querier interface {
 	ClearDocumentChunks(ctx context.Context, arg ClearDocumentChunksParams) error
-	CreateChunks(ctx context.Context, arg []CreateChunksParams) (int64, error)
+	// Backs the embedding alignment guard: how many chunks were embedded in a
+	// different embedding space than the currently-active embedder. Non-zero
+	// means vectors that are not comparable are sharing one index.
+	CountChunksWithForeignFingerprint(ctx context.Context, arg CountChunksWithForeignFingerprintParams) (int64, error)
+	// Deliberately :batchexec and not :copyfrom. PostgreSQL rejects COPY FROM
+	// outright on a table with row-level security enabled ("COPY FROM not
+	// supported with row-level security"), which ragit_chunks has. A pgx batch
+	// is one round-trip anyway, and batches here are embedBatchSize-sized.
+	CreateChunks(ctx context.Context, arg []CreateChunksParams) *CreateChunksBatchResults
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error)
-	// Cascades to chunks via the FK in migration 00001.
+	// Cascades to ragit_chunks via the FK in migration 00001.
 	DeleteDocument(ctx context.Context, arg DeleteDocumentParams) error
 	// Returns already-embedded chunks for a document so ProcessDocument can
 	// resume an interrupted embedding run instead of re-embedding from scratch.
 	GetChunkDigestsByDocumentID(ctx context.Context, arg GetChunkDigestsByDocumentIDParams) ([]GetChunkDigestsByDocumentIDRow, error)
 	GetChunksByDocumentID(ctx context.Context, arg GetChunksByDocumentIDParams) ([]Chunk, error)
 	GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams) (Document, error)
+	// Re-stamps the denormalized scope columns on a document's chunks. Required
+	// whenever a document moves scope: reprocessing does NOT fix this, because
+	// the resume check sees identical content and skips rewriting the rows
+	// entirely. See design.md §8.
+	ResyncChunkScope(ctx context.Context, arg ResyncChunkScopeParams) error
+	// Full-text search, kept as a separate callable query rather than fused with
+	// vector search — fusion (RRF or similar) is a v2 decision the caller can
+	// make for itself today. The 'simple' config must match the one used by the
+	// search_vector generated column in migration 00001.
+	SearchChunksByText(ctx context.Context, arg SearchChunksByTextParams) ([]SearchChunksByTextRow, error)
+	// Vector search. The embedding_fingerprint predicate is not an optimization:
+	// vectors produced by different providers/models occupy different spaces and
+	// their cosine distances are meaningless against each other, so chunks
+	// outside the active embedding space must never be ranked alongside those
+	// inside it. min_score is a caller-supplied cutoff on cosine similarity and
+	// is intentionally not defaulted to a "good" value — the useful range is
+	// model-specific and has to be calibrated per embedder (design.md §9).
+	SearchChunksByVector(ctx context.Context, arg SearchChunksByVectorParams) ([]SearchChunksByVectorRow, error)
 	UpdateDocumentError(ctx context.Context, arg UpdateDocumentErrorParams) error
+	// The Update* statements below filter on id alone. That is safe because
+	// every one of them runs inside a WithTenant transaction, where the
+	// ragit_documents RLS policy adds the tenant predicate itself; an id
+	// belonging to another tenant matches zero rows.
 	UpdateDocumentProcessing(ctx context.Context, id uuid.UUID) error
 	UpdateDocumentReady(ctx context.Context, arg UpdateDocumentReadyParams) error
+	// Moves a document between scopes. Callers must follow this with
+	// ResyncChunkScope — the chunks' denormalized copies do not self-heal.
+	UpdateDocumentScope(ctx context.Context, arg UpdateDocumentScopeParams) error
 	UpdateDocumentSkippedTooLarge(ctx context.Context, arg UpdateDocumentSkippedTooLargeParams) error
 }
 

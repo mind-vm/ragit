@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jryannel/ragit"
@@ -89,21 +90,20 @@ func TestIngest_EndToEnd(t *testing.T) {
 	processor := ragit.New(pool, extractor, chunker, embedder, mem)
 
 	tenantID := uuid.New()
-	doc, err := processor.Ingest(context.Background(), tenantID, "handbook.md", "text/markdown", []byte(markdownFixture))
+	doc, err := processor.Ingest(context.Background(), ragit.DocumentInput{
+		TenantID: tenantID, Filename: "handbook.md", MimeType: "text/markdown", Data: []byte(markdownFixture),
+	})
 	require.NoError(t, err)
 	require.Equal(t, "ready", doc.Status)
 	require.NotZero(t, doc.ChunkCount)
 	require.Equal(t, embed.DefaultModel, doc.EmbeddingModel)
 
-	queries := db.New(pool)
-	row, err := queries.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: doc.ID, TenantID: tenantID})
-	require.NoError(t, err)
+	row := getDoc(t, pool, tenantID, doc.ID)
 	require.Equal(t, "ready", row.Status)
 	require.NotNil(t, row.ChunkCount)
 	require.Equal(t, doc.ChunkCount, int(*row.ChunkCount))
 
-	chunks, err := queries.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: doc.ID, TenantID: tenantID})
-	require.NoError(t, err)
+	chunks := getChunks(t, pool, tenantID, doc.ID)
 	require.Len(t, chunks, doc.ChunkCount)
 
 	wantFingerprint := embed.Fingerprint(embedder)
@@ -144,7 +144,9 @@ func TestIngest_ExtractorRejectsDocument_MarksDocumentError(t *testing.T) {
 	processor := ragit.New(pool, extractor, chunk.New(chunk.DefaultConfig()), embedder, store.NewMemoryStore())
 
 	tenantID := uuid.New()
-	doc, err := processor.Ingest(context.Background(), tenantID, "broken.pdf", "application/pdf", []byte("not a real pdf"))
+	doc, err := processor.Ingest(context.Background(), ragit.DocumentInput{
+		TenantID: tenantID, Filename: "broken.pdf", MimeType: "application/pdf", Data: []byte("not a real pdf"),
+	})
 	require.Error(t, err) // the attempt failed — Ingest must not swallow it
 	require.NotNil(t, doc, "the document row is still returned, reflecting its persisted error state")
 	require.Equal(t, "error", doc.Status)
@@ -238,34 +240,31 @@ func TestProcessDocument_ResumesAfterPartialEmbedFailure(t *testing.T) {
 	require.Greaterf(t, len(wantChunks), 10, "fixture must span at least two embedBatchSize(10) batches")
 
 	tenantID := uuid.New()
-	documentID, err := processor.CreateDocument(context.Background(), tenantID, "big.md", "text/markdown", []byte(longFixture))
+	documentID, err := processor.CreateDocument(context.Background(), ragit.DocumentInput{
+		TenantID: tenantID, Filename: "big.md", MimeType: "text/markdown", Data: []byte(longFixture),
+	})
 	require.NoError(t, err)
 
 	// First attempt: fails partway through embedding.
 	err = processor.ProcessDocument(context.Background(), documentID, tenantID)
 	require.Error(t, err)
 
-	queries := db.New(pool)
-	doc, err := queries.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
-	require.NoError(t, err)
+	doc := getDoc(t, pool, tenantID, documentID)
 	require.Equal(t, "error", doc.Status)
 
-	partial, err := queries.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: documentID, TenantID: tenantID})
-	require.NoError(t, err)
+	partial := getChunks(t, pool, tenantID, documentID)
 	require.Len(t, partial, 10, "the first, successful batch should already be persisted")
 
 	// Second attempt: the mock is healthy from here on.
 	err = processor.ProcessDocument(context.Background(), documentID, tenantID)
 	require.NoError(t, err)
 
-	doc, err = queries.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
-	require.NoError(t, err)
+	doc = getDoc(t, pool, tenantID, documentID)
 	require.Equal(t, "ready", doc.Status)
 	require.NotNil(t, doc.ChunkCount)
 	require.Equal(t, len(wantChunks), int(*doc.ChunkCount))
 
-	final, err := queries.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: documentID, TenantID: tenantID})
-	require.NoError(t, err)
+	final := getChunks(t, pool, tenantID, documentID)
 	require.Len(t, final, len(wantChunks))
 
 	// The core claim of this phase: across both attempts, exactly one text
@@ -294,21 +293,46 @@ func TestProcessDocument_MaxChunksPerDocument_SkipsTooLarge(t *testing.T) {
 	processor := ragit.New(pool, extractor, chunker, embedder, store.NewMemoryStore()).WithMaxChunksPerDocument(3)
 
 	tenantID := uuid.New()
-	documentID, err := processor.CreateDocument(context.Background(), tenantID, "big.md", "text/markdown", []byte(longFixture))
+	documentID, err := processor.CreateDocument(context.Background(), ragit.DocumentInput{
+		TenantID: tenantID, Filename: "big.md", MimeType: "text/markdown", Data: []byte(longFixture),
+	})
 	require.NoError(t, err)
 
 	err = processor.ProcessDocument(context.Background(), documentID, tenantID)
 	require.NoError(t, err, "the guardrail is a deliberate quarantine, not a Go error")
 	require.False(t, embedCalled, "embedding must never be called once the chunk cap is exceeded")
 
-	queries := db.New(pool)
-	doc, err := queries.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
-	require.NoError(t, err)
+	doc := getDoc(t, pool, tenantID, documentID)
 	require.Equal(t, "skipped_too_large", doc.Status)
 	require.NotNil(t, doc.ChunkCount)
 	require.Zero(t, *doc.ChunkCount)
 
-	chunks, err := queries.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: documentID, TenantID: tenantID})
-	require.NoError(t, err)
+	chunks := getChunks(t, pool, tenantID, documentID)
 	require.Empty(t, chunks)
+}
+
+// getDoc and getChunks read through a tenant-scoped transaction. Reading with
+// a plain db.New(pool) would return zero rows rather than failing loudly,
+// because the RLS policies fail closed when no tenant GUC is set — which is
+// the behaviour TestRLS_* below pins down deliberately.
+func getDoc(t *testing.T, pool *pgxpool.Pool, tenantID, documentID uuid.UUID) db.Document {
+	t.Helper()
+	var doc db.Document
+	require.NoError(t, db.WithTenant(context.Background(), pool, tenantID, func(q *db.Queries) error {
+		var err error
+		doc, err = q.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
+		return err
+	}))
+	return doc
+}
+
+func getChunks(t *testing.T, pool *pgxpool.Pool, tenantID, documentID uuid.UUID) []db.Chunk {
+	t.Helper()
+	var chunks []db.Chunk
+	require.NoError(t, db.WithTenant(context.Background(), pool, tenantID, func(q *db.Queries) error {
+		var err error
+		chunks, err = q.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: documentID, TenantID: tenantID})
+		return err
+	}))
+	return chunks
 }

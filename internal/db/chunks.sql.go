@@ -14,7 +14,7 @@ import (
 )
 
 const clearDocumentChunks = `-- name: ClearDocumentChunks :exec
-DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2
+DELETE FROM ragit_chunks WHERE document_id = $1 AND tenant_id = $2
 `
 
 type ClearDocumentChunksParams struct {
@@ -27,20 +27,31 @@ func (q *Queries) ClearDocumentChunks(ctx context.Context, arg ClearDocumentChun
 	return err
 }
 
-type CreateChunksParams struct {
-	DocumentID           uuid.UUID           `json:"document_id"`
-	TenantID             uuid.UUID           `json:"tenant_id"`
-	ChunkIndex           int32               `json:"chunk_index"`
-	HeadingPath          []string            `json:"heading_path"`
-	Content              string              `json:"content"`
-	Embedding            *pgvector_go.Vector `json:"embedding"`
-	EmbeddingFingerprint *string             `json:"embedding_fingerprint"`
-	Metadata             json.RawMessage     `json:"metadata"`
+const countChunksWithForeignFingerprint = `-- name: CountChunksWithForeignFingerprint :one
+SELECT count(*) FROM ragit_chunks
+WHERE tenant_id = $1
+  AND embedding IS NOT NULL
+  AND (embedding_fingerprint IS DISTINCT FROM $2::text)
+`
+
+type CountChunksWithForeignFingerprintParams struct {
+	TenantID             uuid.UUID `json:"tenant_id"`
+	EmbeddingFingerprint string    `json:"embedding_fingerprint"`
+}
+
+// Backs the embedding alignment guard: how many chunks were embedded in a
+// different embedding space than the currently-active embedder. Non-zero
+// means vectors that are not comparable are sharing one index.
+func (q *Queries) CountChunksWithForeignFingerprint(ctx context.Context, arg CountChunksWithForeignFingerprintParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countChunksWithForeignFingerprint, arg.TenantID, arg.EmbeddingFingerprint)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const getChunkDigestsByDocumentID = `-- name: GetChunkDigestsByDocumentID :many
 SELECT chunk_index, content, embedding_fingerprint
-FROM chunks
+FROM ragit_chunks
 WHERE document_id = $1 AND tenant_id = $2 AND embedding IS NOT NULL
 ORDER BY chunk_index ASC
 `
@@ -79,7 +90,7 @@ func (q *Queries) GetChunkDigestsByDocumentID(ctx context.Context, arg GetChunkD
 }
 
 const getChunksByDocumentID = `-- name: GetChunksByDocumentID :many
-SELECT id, document_id, tenant_id, chunk_index, heading_path, content, embedding, embedding_fingerprint, search_vector, metadata, created_at FROM chunks WHERE document_id = $1 AND tenant_id = $2 ORDER BY chunk_index ASC
+SELECT id, document_id, tenant_id, scope_id, session_id, chunk_index, heading_path, content, embedding, embedding_fingerprint, search_vector, metadata, created_at FROM ragit_chunks WHERE document_id = $1 AND tenant_id = $2 ORDER BY chunk_index ASC
 `
 
 type GetChunksByDocumentIDParams struct {
@@ -100,6 +111,8 @@ func (q *Queries) GetChunksByDocumentID(ctx context.Context, arg GetChunksByDocu
 			&i.ID,
 			&i.DocumentID,
 			&i.TenantID,
+			&i.ScopeID,
+			&i.SessionID,
 			&i.ChunkIndex,
 			&i.HeadingPath,
 			&i.Content,
@@ -108,6 +121,198 @@ func (q *Queries) GetChunksByDocumentID(ctx context.Context, arg GetChunksByDocu
 			&i.SearchVector,
 			&i.Metadata,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resyncChunkScope = `-- name: ResyncChunkScope :exec
+UPDATE ragit_chunks
+SET scope_id = $3, session_id = $4
+WHERE document_id = $1 AND tenant_id = $2
+`
+
+type ResyncChunkScopeParams struct {
+	DocumentID uuid.UUID  `json:"document_id"`
+	TenantID   uuid.UUID  `json:"tenant_id"`
+	ScopeID    *uuid.UUID `json:"scope_id"`
+	SessionID  *uuid.UUID `json:"session_id"`
+}
+
+// Re-stamps the denormalized scope columns on a document's chunks. Required
+// whenever a document moves scope: reprocessing does NOT fix this, because
+// the resume check sees identical content and skips rewriting the rows
+// entirely. See design.md §8.
+func (q *Queries) ResyncChunkScope(ctx context.Context, arg ResyncChunkScopeParams) error {
+	_, err := q.db.Exec(ctx, resyncChunkScope,
+		arg.DocumentID,
+		arg.TenantID,
+		arg.ScopeID,
+		arg.SessionID,
+	)
+	return err
+}
+
+const searchChunksByText = `-- name: SearchChunksByText :many
+SELECT
+  c.id,
+  c.document_id,
+  c.chunk_index,
+  c.heading_path,
+  c.content,
+  c.metadata,
+  d.filename,
+  ts_rank(c.search_vector, websearch_to_tsquery('simple', $1::text))::float8 AS score
+FROM ragit_chunks c
+JOIN ragit_documents d ON d.id = c.document_id
+WHERE c.tenant_id = $2
+  AND c.search_vector @@ websearch_to_tsquery('simple', $1::text)
+  AND ($3::uuid IS NULL OR c.scope_id = $3::uuid)
+  AND (c.session_id IS NULL OR c.session_id = $4::uuid)
+ORDER BY score DESC, c.document_id, c.chunk_index ASC
+LIMIT $5::int
+`
+
+type SearchChunksByTextParams struct {
+	Query       string     `json:"query"`
+	TenantID    uuid.UUID  `json:"tenant_id"`
+	ScopeID     *uuid.UUID `json:"scope_id"`
+	SessionID   *uuid.UUID `json:"session_id"`
+	ResultLimit int32      `json:"result_limit"`
+}
+
+type SearchChunksByTextRow struct {
+	ID          uuid.UUID       `json:"id"`
+	DocumentID  uuid.UUID       `json:"document_id"`
+	ChunkIndex  int32           `json:"chunk_index"`
+	HeadingPath []string        `json:"heading_path"`
+	Content     string          `json:"content"`
+	Metadata    json.RawMessage `json:"metadata"`
+	Filename    string          `json:"filename"`
+	Score       float64         `json:"score"`
+}
+
+// Full-text search, kept as a separate callable query rather than fused with
+// vector search — fusion (RRF or similar) is a v2 decision the caller can
+// make for itself today. The 'simple' config must match the one used by the
+// search_vector generated column in migration 00001.
+func (q *Queries) SearchChunksByText(ctx context.Context, arg SearchChunksByTextParams) ([]SearchChunksByTextRow, error) {
+	rows, err := q.db.Query(ctx, searchChunksByText,
+		arg.Query,
+		arg.TenantID,
+		arg.ScopeID,
+		arg.SessionID,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchChunksByTextRow{}
+	for rows.Next() {
+		var i SearchChunksByTextRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DocumentID,
+			&i.ChunkIndex,
+			&i.HeadingPath,
+			&i.Content,
+			&i.Metadata,
+			&i.Filename,
+			&i.Score,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchChunksByVector = `-- name: SearchChunksByVector :many
+SELECT
+  c.id,
+  c.document_id,
+  c.chunk_index,
+  c.heading_path,
+  c.content,
+  c.metadata,
+  d.filename,
+  (1 - (c.embedding <=> $1::vector))::float8 AS score
+FROM ragit_chunks c
+JOIN ragit_documents d ON d.id = c.document_id
+WHERE c.tenant_id = $2
+  AND c.embedding IS NOT NULL
+  AND c.embedding_fingerprint = $3::text
+  AND ($4::uuid IS NULL OR c.scope_id = $4::uuid)
+  AND (c.session_id IS NULL OR c.session_id = $5::uuid)
+  AND (1 - (c.embedding <=> $1::vector)) >= $6::float8
+ORDER BY c.embedding <=> $1::vector
+LIMIT $7::int
+`
+
+type SearchChunksByVectorParams struct {
+	QueryEmbedding       pgvector_go.Vector `json:"query_embedding"`
+	TenantID             uuid.UUID          `json:"tenant_id"`
+	EmbeddingFingerprint string             `json:"embedding_fingerprint"`
+	ScopeID              *uuid.UUID         `json:"scope_id"`
+	SessionID            *uuid.UUID         `json:"session_id"`
+	MinScore             float64            `json:"min_score"`
+	ResultLimit          int32              `json:"result_limit"`
+}
+
+type SearchChunksByVectorRow struct {
+	ID          uuid.UUID       `json:"id"`
+	DocumentID  uuid.UUID       `json:"document_id"`
+	ChunkIndex  int32           `json:"chunk_index"`
+	HeadingPath []string        `json:"heading_path"`
+	Content     string          `json:"content"`
+	Metadata    json.RawMessage `json:"metadata"`
+	Filename    string          `json:"filename"`
+	Score       float64         `json:"score"`
+}
+
+// Vector search. The embedding_fingerprint predicate is not an optimization:
+// vectors produced by different providers/models occupy different spaces and
+// their cosine distances are meaningless against each other, so chunks
+// outside the active embedding space must never be ranked alongside those
+// inside it. min_score is a caller-supplied cutoff on cosine similarity and
+// is intentionally not defaulted to a "good" value — the useful range is
+// model-specific and has to be calibrated per embedder (design.md §9).
+func (q *Queries) SearchChunksByVector(ctx context.Context, arg SearchChunksByVectorParams) ([]SearchChunksByVectorRow, error) {
+	rows, err := q.db.Query(ctx, searchChunksByVector,
+		arg.QueryEmbedding,
+		arg.TenantID,
+		arg.EmbeddingFingerprint,
+		arg.ScopeID,
+		arg.SessionID,
+		arg.MinScore,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchChunksByVectorRow{}
+	for rows.Next() {
+		var i SearchChunksByVectorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DocumentID,
+			&i.ChunkIndex,
+			&i.HeadingPath,
+			&i.Content,
+			&i.Metadata,
+			&i.Filename,
+			&i.Score,
 		); err != nil {
 			return nil, err
 		}

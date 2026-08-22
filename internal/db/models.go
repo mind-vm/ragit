@@ -16,6 +16,8 @@ type Chunk struct {
 	ID                   uuid.UUID           `json:"id"`
 	DocumentID           uuid.UUID           `json:"document_id"`
 	TenantID             uuid.UUID           `json:"tenant_id"`
+	ScopeID              *uuid.UUID          `json:"scope_id"`
+	SessionID            *uuid.UUID          `json:"session_id"`
 	ChunkIndex           int32               `json:"chunk_index"`
 	HeadingPath          []string            `json:"heading_path"`
 	Content              string              `json:"content"`
@@ -29,6 +31,8 @@ type Chunk struct {
 type Document struct {
 	ID             uuid.UUID       `json:"id"`
 	TenantID       uuid.UUID       `json:"tenant_id"`
+	ScopeID        *uuid.UUID      `json:"scope_id"`
+	SessionID      *uuid.UUID      `json:"session_id"`
 	SourceUri      *string         `json:"source_uri"`
 	Filename       string          `json:"filename"`
 	MimeType       string          `json:"mime_type"`
