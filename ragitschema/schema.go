@@ -90,7 +90,18 @@ func New(dimension int) *Schema {
 			Comment("pending|processing|ready|error|skipped_too_large"),
 		schema.Text("error").Nullable(),
 		schema.Text("text_content").Nullable(),
-		schema.JSON("metadata").Default(schema.Value("{}")),
+		schema.JSON("metadata").Default(schema.Value("{}")).
+			Comment("the extractor's own structured output: page count, language, detected tables"),
+
+		// attributes is the host application's own key-value bag, kept
+		// separate from metadata on purpose: metadata is whatever the
+		// extractor produced, and merging the two would let a new xberg field
+		// collide with an application key. Filterable via JSONB containment,
+		// so an application can narrow a search by its own domain facts
+		// without ragit having to model them.
+		schema.JSON("attributes").Default(schema.Value("{}")).
+			Comment("application-supplied key/value pairs, filterable by containment"),
+
 		schema.Int("chunk_count").Nullable().Sortable(),
 		schema.Text("embedding_model").Nullable().Filterable(),
 		schema.Timestamp("processed_at").Nullable().Sortable(),
@@ -105,6 +116,12 @@ func New(dimension int) *Schema {
 	document.Index("tenant_id")
 	document.Index("tenant_id", "scope_a_id")
 	document.Index("tenant_id", "scope_b_id")
+	document.AddIndex(schema.Index{
+		Name:      "idx_ragit_documents_attributes",
+		Columns:   []string{"attributes"},
+		Method:    "gin",
+		Opclasses: map[string]string{"attributes": "jsonb_path_ops"},
+	})
 	document.AddIndex(schema.Index{
 		Name:    "idx_ragit_documents_expires_at",
 		Columns: []string{"expires_at"},
@@ -139,6 +156,15 @@ func New(dimension int) *Schema {
 		schema.Text("embedding_fingerprint").Nullable().Filterable(),
 
 		schema.JSON("metadata").Default(schema.Value("{}")),
+
+		// A denormalized copy of the document's attributes, for the same
+		// reason the scope columns are denormalized: retrieval filters on it
+		// alongside the vector search, and doing that through a join fights
+		// the HNSW index rather than riding it. Same obligation, too — the
+		// copy does not self-heal, so changing a document's attributes goes
+		// through Processor.SetDocumentAttributes, which re-stamps the chunks.
+		schema.JSON("attributes").Default(schema.Value("{}")),
+
 		schema.Timestamp("expires_at").Nullable().Filterable(),
 		schema.Timestamp("created_at").Default(schema.Now()),
 	).Describe("One retrieval-sized piece of a document, with its embedding.")
@@ -148,6 +174,12 @@ func New(dimension int) *Schema {
 	chunk.Index("tenant_id", "embedding_fingerprint")
 	chunk.Index("tenant_id", "scope_a_id")
 	chunk.Index("tenant_id", "scope_b_id")
+	chunk.AddIndex(schema.Index{
+		Name:      "idx_ragit_chunks_attributes",
+		Columns:   []string{"attributes"},
+		Method:    "gin",
+		Opclasses: map[string]string{"attributes": "jsonb_path_ops"},
+	})
 	chunk.AddIndex(schema.Index{
 		Name:    "idx_ragit_chunks_session_id",
 		Columns: []string{"session_id"},

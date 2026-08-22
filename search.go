@@ -74,6 +74,29 @@ type SearchOptions struct {
 	// sit around 0.5–0.7, OpenAI's much higher), so a value baked in here
 	// would be wrong for most models. Calibrate it per embedder.
 	MinScore float64
+
+	// Attributes narrows to chunks whose document carries all of these
+	// key/value pairs. Empty narrows nothing — this filters a result set that
+	// Scope has already confined, and is not itself a boundary. See
+	// [Attributes].
+	Attributes Attributes
+}
+
+// preds renders the options' own predicates, which narrow rather than confine.
+//
+// The column is qualified: both tables in the join carry `attributes`, and the
+// one to filter is the chunk's denormalized copy — that is what the chunk GIN
+// index covers, and filtering the joined document instead would fight the HNSW
+// scan rather than ride alongside it.
+func (o SearchOptions) preds() ([]sqlb.Pred, error) {
+	pred, ok, err := o.Attributes.containsPred(`"ragit_chunks"."attributes"`)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return []sqlb.Pred{pred}, nil
 }
 
 func (o SearchOptions) limit() int {
@@ -111,10 +134,16 @@ func (p *Processor) VectorSearch(ctx context.Context, scope Scope, query string,
 	near := sqlb.Near(sqlb.F("embedding"), sqlb.Vector(vectors[0]))
 	fingerprint := embed.Fingerprint(p.embedder)
 
+	narrowing, err := opts.preds()
+	if err != nil {
+		return nil, err
+	}
+
 	preds := append(scope.preds(),
 		sqlb.F("embedding").NotNull(),
 		sqlb.F("embedding_fingerprint").Eq(fingerprint),
 	)
+	preds = append(preds, narrowing...)
 	if opts.MinScore > 0 {
 		preds = append(preds, near.AtLeast(opts.MinScore))
 	}
@@ -162,10 +191,15 @@ func (p *Processor) FullTextSearch(ctx context.Context, scope Scope, query strin
 	rank := sqlb.Raw{SQL: "ts_rank(search_vector, " + tsquery + ")", Args: []any{query}}
 	matches := sqlb.RawPred("search_vector @@ "+tsquery, query)
 
+	narrowing, err := opts.preds()
+	if err != nil {
+		return nil, err
+	}
+
 	q := sqlb.Query[Chunk]().
 		Select(citationColumns(sqlb.Sel(rank).As("score"))...).
 		Join("ragit_documents", "d", sqlb.F("document_id").EqField(sqlb.F("d.id"))).
-		Where(append(scope.preds(), matches)...).
+		Where(append(append(scope.preds(), matches), narrowing...)...).
 		OrderBy(sqlb.OrderByDesc(rank), sqlb.F("document_id").Asc(), sqlb.F("chunk_index").Asc()).
 		Limit(opts.limit())
 

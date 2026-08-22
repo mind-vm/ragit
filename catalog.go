@@ -18,10 +18,32 @@ type ListFilter struct {
 	// Status restricts to documents in the given states. Empty means every
 	// state, which is the useful default for "what has been uploaded".
 	Status []string
+	// Attributes restricts to documents carrying all of these key/value
+	// pairs. Empty narrows nothing — like Status, and unlike Scope, this is a
+	// filter rather than a boundary. See [Attributes].
+	Attributes Attributes
 	// Limit caps the result. Zero means DefaultListLimit.
 	Limit int
 	// Offset pages through results.
 	Offset int
+}
+
+// preds renders the confinement and the narrowing filters together. The two
+// are built in one place but mean different things: scope.preds() is the
+// boundary, the rest narrows inside it.
+func (f ListFilter) preds(scope Scope) ([]sqlb.Pred, error) {
+	preds := scope.preds()
+	if len(f.Status) > 0 {
+		preds = append(preds, DocumentCols.Status.OneOf(f.Status...))
+	}
+	attrPred, ok, err := f.Attributes.containsPred("attributes")
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		preds = append(preds, attrPred)
+	}
+	return preds, nil
 }
 
 // GetDocument reads one document by id, confined to scope.
@@ -68,13 +90,13 @@ func (p *Processor) ListDocuments(ctx context.Context, scope Scope, filter ListF
 		limit = DefaultListLimit
 	}
 
-	preds := scope.preds()
-	if len(filter.Status) > 0 {
-		preds = append(preds, DocumentCols.Status.OneOf(filter.Status...))
+	preds, err := filter.preds(scope)
+	if err != nil {
+		return nil, err
 	}
 
 	var out []Document
-	err := WithTenant(ctx, p.pool, scope.TenantID(), func(db sqlb.Executor) error {
+	err = WithTenant(ctx, p.pool, scope.TenantID(), func(db sqlb.Executor) error {
 		rows, err := sqlb.Query[Document]().
 			Where(preds...).
 			OrderBy(DocumentCols.CreatedAt.Desc(), DocumentCols.ID.Desc()).
@@ -99,13 +121,13 @@ func (p *Processor) CountDocuments(ctx context.Context, scope Scope, filter List
 		return 0, err
 	}
 
-	preds := scope.preds()
-	if len(filter.Status) > 0 {
-		preds = append(preds, DocumentCols.Status.OneOf(filter.Status...))
+	preds, err := filter.preds(scope)
+	if err != nil {
+		return 0, err
 	}
 
 	var count int64
-	err := WithTenant(ctx, p.pool, scope.TenantID(), func(db sqlb.Executor) error {
+	err = WithTenant(ctx, p.pool, scope.TenantID(), func(db sqlb.Executor) error {
 		n, err := sqlb.Query[Document]().Where(preds...).Count(ctx, db)
 		if err != nil {
 			return fmt.Errorf("ragit: count documents: %w", err)

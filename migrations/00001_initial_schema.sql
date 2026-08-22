@@ -18,6 +18,7 @@ CREATE TABLE "ragit_chunks" (
     "embedding" vector(1536),
     "embedding_fingerprint" text,
     "metadata" jsonb NOT NULL DEFAULT '{}',
+    "attributes" jsonb NOT NULL DEFAULT '{}',
     "expires_at" timestamptz,
     "created_at" timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT "ragit_chunks_pkey" PRIMARY KEY ("id")
@@ -39,6 +40,7 @@ CREATE TABLE "ragit_documents" (
     "error" text,
     "text_content" text,
     "metadata" jsonb NOT NULL DEFAULT '{}',
+    "attributes" jsonb NOT NULL DEFAULT '{}',
     "chunk_count" integer,
     "embedding_model" text,
     "processed_at" timestamptz,
@@ -49,9 +51,13 @@ CREATE TABLE "ragit_documents" (
 );
 COMMENT ON TABLE "ragit_documents" IS 'A source document ingested by ragit.';
 COMMENT ON COLUMN "ragit_documents"."status" IS 'pending|processing|ready|error|skipped_too_large';
+COMMENT ON COLUMN "ragit_documents"."metadata" IS 'the extractor''s own structured output: page count, language, detected tables';
+COMMENT ON COLUMN "ragit_documents"."attributes" IS 'application-supplied key/value pairs, filterable by containment';
 -- +goose StatementEnd
 -- add foreign key ragit_chunks_document_id_fkey
 ALTER TABLE "ragit_chunks" ADD CONSTRAINT "ragit_chunks_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "ragit_documents" ("id") ON DELETE CASCADE;
+-- index idx_ragit_chunks_attributes
+CREATE INDEX "idx_ragit_chunks_attributes" ON "ragit_chunks" USING gin ("attributes" jsonb_path_ops);
 -- index idx_ragit_chunks_embedding_hnsw
 CREATE INDEX "idx_ragit_chunks_embedding_hnsw" ON "ragit_chunks" USING hnsw ("embedding" vector_cosine_ops) WITH (ef_construction = 64, m = 16);
 -- index idx_ragit_chunks_expires_at
@@ -68,6 +74,8 @@ CREATE INDEX "ragit_chunks_tenant_id_idx" ON "ragit_chunks" ("tenant_id");
 CREATE INDEX "ragit_chunks_tenant_id_scope_a_id_idx" ON "ragit_chunks" ("tenant_id", "scope_a_id");
 -- index ragit_chunks_tenant_id_scope_b_id_idx
 CREATE INDEX "ragit_chunks_tenant_id_scope_b_id_idx" ON "ragit_chunks" ("tenant_id", "scope_b_id");
+-- index idx_ragit_documents_attributes
+CREATE INDEX "idx_ragit_documents_attributes" ON "ragit_documents" USING gin ("attributes" jsonb_path_ops);
 -- index idx_ragit_documents_expires_at
 CREATE INDEX "idx_ragit_documents_expires_at" ON "ragit_documents" ("expires_at") WHERE expires_at IS NOT NULL;
 -- index ragit_documents_tenant_id_idx
@@ -82,6 +90,7 @@ DROP INDEX "ragit_documents_tenant_id_scope_b_id_idx";
 DROP INDEX "ragit_documents_tenant_id_scope_a_id_idx";
 DROP INDEX "ragit_documents_tenant_id_idx";
 DROP INDEX "idx_ragit_documents_expires_at";
+DROP INDEX "idx_ragit_documents_attributes";
 DROP INDEX "ragit_chunks_tenant_id_scope_b_id_idx";
 DROP INDEX "ragit_chunks_tenant_id_scope_a_id_idx";
 DROP INDEX "ragit_chunks_tenant_id_idx";
@@ -90,6 +99,7 @@ DROP INDEX "ragit_chunks_document_id_idx";
 DROP INDEX "idx_ragit_chunks_session_id";
 DROP INDEX "idx_ragit_chunks_expires_at";
 DROP INDEX "idx_ragit_chunks_embedding_hnsw";
+DROP INDEX "idx_ragit_chunks_attributes";
 ALTER TABLE "ragit_chunks" DROP CONSTRAINT "ragit_chunks_document_id_fkey";
 DROP TABLE "ragit_documents";
 DROP TABLE "ragit_chunks";

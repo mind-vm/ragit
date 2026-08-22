@@ -72,6 +72,11 @@ type DocumentInput struct {
 	// conversation or agent session. Such documents are invisible to ordinary
 	// library search unless a caller names that session.
 	SessionID *uuid.UUID
+	// Attributes are the application's own key/value pairs, stored on the
+	// document and denormalized onto its chunks so searches can filter by
+	// them. They narrow a result set; they do not confine it — see
+	// [Attributes].
+	Attributes Attributes
 	// ExpiresAt sets a retention clock on the document and its chunks. Nil
 	// keeps it until explicitly deleted.
 	ExpiresAt *time.Time
@@ -135,11 +140,19 @@ func (p *Processor) WithEventSink(sink EventSink) *Processor {
 // embedBatchSize bounds how many chunks are embedded per provider call.
 const embedBatchSize = 10
 
+// nowFunc is time.Now, named so the mutation helpers read the same way.
+var nowFunc = time.Now
+
 // CreateDocument stores the bytes and inserts a pending row. Fast and
 // synchronous — meant to be called from an upload handler, before a
 // ProcessDocument job is enqueued.
 func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (uuid.UUID, error) {
 	if err := in.validate(); err != nil {
+		return uuid.Nil, err
+	}
+
+	attributes, err := in.Attributes.raw()
+	if err != nil {
 		return uuid.Nil, err
 	}
 
@@ -149,16 +162,17 @@ func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (uuid.
 	}
 
 	row := &Document{
-		TenantID:  in.TenantID,
-		ScopeAID:  in.ScopeA,
-		ScopeBID:  in.ScopeB,
-		SessionID: in.SessionID,
-		SourceURI: &uri,
-		Filename:  in.Filename,
-		MimeType:  in.MimeType,
-		Status:    StatusPending,
-		Metadata:  json.RawMessage("{}"),
-		ExpiresAt: in.ExpiresAt,
+		TenantID:   in.TenantID,
+		ScopeAID:   in.ScopeA,
+		ScopeBID:   in.ScopeB,
+		SessionID:  in.SessionID,
+		SourceURI:  &uri,
+		Filename:   in.Filename,
+		MimeType:   in.MimeType,
+		Status:     StatusPending,
+		Metadata:   json.RawMessage("{}"),
+		Attributes: attributes,
+		ExpiresAt:  in.ExpiresAt,
 	}
 
 	var id uuid.UUID
@@ -525,6 +539,7 @@ func (p *Processor) embedAndStore(ctx context.Context, doc *Document, chunks []c
 				Embedding:            &vec,
 				EmbeddingFingerprint: &currentFP,
 				Metadata:             json.RawMessage("{}"),
+				Attributes:           doc.Attributes,
 				ExpiresAt:            doc.ExpiresAt,
 			}
 		}

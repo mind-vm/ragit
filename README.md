@@ -93,6 +93,38 @@ that never sets the scope columns works unchanged while one that does cannot
 leak across a boundary because a caller left a field out. Unbounded access is
 `AnyA()` / `AnyB()` — a separate predicate, never a magic value in the column.
 
+## Filtering by your own facts
+
+Documents carry application-supplied key/value `Attributes`, stored separately
+from the extractor's `Metadata` so a new xberg field can never collide with one
+of your keys:
+
+```go
+processor.Ingest(ctx, ragit.DocumentInput{
+    TenantID:   tenantID,
+    Attributes: ragit.Attributes{"course": courseID, "kind": "recording"},
+    ...
+})
+
+results, err := processor.VectorSearch(ctx, scope, query, ragit.SearchOptions{
+    TopK:       8,
+    Attributes: ragit.Attributes{"course": courseID},
+})
+```
+
+Matching is JSONB containment, so a filter names only the pairs it cares about,
+and multiple pairs are ANDed. Attributes are denormalized onto chunks and GIN
+indexed, so the filter rides alongside the vector scan rather than fighting it —
+which is also why changing them goes through `SetDocumentAttributes`, which
+re-stamps the chunks. Reprocessing will not fix a stale copy: the resume check
+sees identical content and skips the rewrite.
+
+**Attributes narrow; they do not confine.** An empty filter matches everything,
+which is the opposite of `Scope`'"'"'s rule and deliberate — a forgotten filter
+should return more rows, not none. So do not use them for access control: a
+caller that must not see a document should be outside its scope, not merely
+failing to match a label.
+
 ## Schema
 
 The schema is declared in [`ragitschema`](ragitschema/schema.go) and everything

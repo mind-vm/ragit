@@ -22,6 +22,7 @@ type chunkColumns struct {
 	Content              sqlb.TextCol[string]
 	EmbeddingFingerprint sqlb.TextCol[string]
 	Metadata             sqlb.Col[json.RawMessage]
+	Attributes           sqlb.Col[json.RawMessage]
 	ExpiresAt            sqlb.Col[time.Time]
 	CreatedAt            sqlb.Col[time.Time]
 }
@@ -43,6 +44,7 @@ var ChunkCols = chunkColumns{
 	Content:              sqlb.TextColumn[string]("content"),
 	EmbeddingFingerprint: sqlb.TextColumn[string]("embedding_fingerprint"),
 	Metadata:             sqlb.Typed[json.RawMessage]("metadata"),
+	Attributes:           sqlb.Typed[json.RawMessage]("attributes"),
 	ExpiresAt:            sqlb.Typed[time.Time]("expires_at"),
 	CreatedAt:            sqlb.Typed[time.Time]("created_at"),
 }
@@ -123,6 +125,12 @@ func (u *ChunkUpdate) SetMetadata(v json.RawMessage) *ChunkUpdate {
 	return u
 }
 
+// SetAttributes sets attributes.
+func (u *ChunkUpdate) SetAttributes(v json.RawMessage) *ChunkUpdate {
+	u.stmt.Set("attributes", v)
+	return u
+}
+
 // SetExpiresAt sets expires_at.
 func (u *ChunkUpdate) SetExpiresAt(v *time.Time) *ChunkUpdate {
 	u.stmt.Set("expires_at", v)
@@ -158,6 +166,7 @@ type documentColumns struct {
 	Error          sqlb.TextCol[string]
 	TextContent    sqlb.TextCol[string]
 	Metadata       sqlb.Col[json.RawMessage]
+	Attributes     sqlb.Col[json.RawMessage]
 	ChunkCount     sqlb.Col[int32]
 	EmbeddingModel sqlb.TextCol[string]
 	ProcessedAt    sqlb.Col[time.Time]
@@ -180,6 +189,7 @@ var DocumentCols = documentColumns{
 	Error:          sqlb.TextColumn[string]("error"),
 	TextContent:    sqlb.TextColumn[string]("text_content"),
 	Metadata:       sqlb.Typed[json.RawMessage]("metadata"),
+	Attributes:     sqlb.Typed[json.RawMessage]("attributes"),
 	ChunkCount:     sqlb.Typed[int32]("chunk_count"),
 	EmbeddingModel: sqlb.TextColumn[string]("embedding_model"),
 	ProcessedAt:    sqlb.Typed[time.Time]("processed_at"),
@@ -261,6 +271,12 @@ func (u *DocumentUpdate) SetTextContent(v *string) *DocumentUpdate {
 // SetMetadata sets metadata.
 func (u *DocumentUpdate) SetMetadata(v json.RawMessage) *DocumentUpdate {
 	u.stmt.Set("metadata", v)
+	return u
+}
+
+// SetAttributes sets attributes.
+func (u *DocumentUpdate) SetAttributes(v json.RawMessage) *DocumentUpdate {
+	u.stmt.Set("attributes", v)
 	return u
 }
 
