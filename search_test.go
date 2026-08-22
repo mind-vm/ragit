@@ -91,6 +91,9 @@ type searchHarness struct {
 	processor *ragit.Processor
 	pool      *pgxpool.Pool
 	embedder  embed.Embedder
+	// store is held as the concrete type so retention tests can assert that
+	// deletes purged the bytes, not merely the database rows.
+	store *store.MemoryStore
 }
 
 func newSearchHarness(t *testing.T, provider string) *searchHarness {
@@ -110,13 +113,14 @@ func newSearchHarness(t *testing.T, provider string) *searchHarness {
 	})
 	require.NoError(t, err)
 
+	mem := store.NewMemoryStore()
 	processor := ragit.New(pool,
 		extract.NewXbergExtractor(extractServer.URL, 0),
 		chunk.New(chunk.Config{Size: 1000, Overlap: 0}),
 		embedder,
-		store.NewMemoryStore(),
+		mem,
 	)
-	return &searchHarness{processor: processor, pool: pool, embedder: embedder}
+	return &searchHarness{processor: processor, pool: pool, embedder: embedder, store: mem}
 }
 
 func (h *searchHarness) ingest(t *testing.T, in ragit.DocumentInput) *ragit.Document {

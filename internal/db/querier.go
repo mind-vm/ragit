@@ -24,11 +24,21 @@ type Querier interface {
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error)
 	// Cascades to ragit_chunks via the FK in migration 00001.
 	DeleteDocument(ctx context.Context, arg DeleteDocumentParams) error
+	// Cascades to ragit_chunks via the FK in migration 00001.
+	DeleteDocumentsByIDs(ctx context.Context, ids []uuid.UUID) (int64, error)
+	// Chunks can outlive their document's retention clock when only the chunks
+	// were given one (an attachment whose source file is still wanted). Runs
+	// after the document sweep so it only sees genuinely orphaned expiries.
+	DeleteExpiredChunks(ctx context.Context) (int64, error)
 	// Returns already-embedded chunks for a document so ProcessDocument can
 	// resume an interrupted embedding run instead of re-embedding from scratch.
 	GetChunkDigestsByDocumentID(ctx context.Context, arg GetChunkDigestsByDocumentIDParams) ([]GetChunkDigestsByDocumentIDRow, error)
 	GetChunksByDocumentID(ctx context.Context, arg GetChunksByDocumentIDParams) ([]Chunk, error)
 	GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams) (Document, error)
+	// Cross-tenant by design: the retention sweep cannot enumerate the tenants
+	// that own expired rows without first reading across tenants. Runs under
+	// db.WithMaintenance, which is the only place the maintenance GUC is set.
+	ListExpiredDocuments(ctx context.Context, resultLimit int32) ([]ListExpiredDocumentsRow, error)
 	// Re-stamps the denormalized scope columns on a document's chunks. Required
 	// whenever a document moves scope: reprocessing does NOT fix this, because
 	// the resume check sees identical content and skips rewriting the rows

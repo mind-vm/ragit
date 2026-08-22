@@ -26,6 +26,7 @@ type Chunk struct {
 	SearchVector         interface{}         `json:"search_vector"`
 	Metadata             json.RawMessage     `json:"metadata"`
 	CreatedAt            time.Time           `json:"created_at"`
+	ExpiresAt            *time.Time          `json:"expires_at"`
 }
 
 type Document struct {
@@ -45,4 +46,5 @@ type Document struct {
 	ProcessedAt    *time.Time      `json:"processed_at"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
+	ExpiresAt      *time.Time      `json:"expires_at"`
 }

@@ -13,6 +13,10 @@ import (
 // migration 00001 read to decide which rows are visible.
 const TenantGUC = "ragit.tenant_id"
 
+// MaintenanceGUC opts a transaction out of tenant scoping for reads and
+// deletes. See [WithMaintenance]; it is set in exactly one place.
+const MaintenanceGUC = "ragit.maintenance"
+
 // WithTenant runs fn inside a transaction that has the tenant GUC set, so
 // the RLS policies on ragit_documents/ragit_chunks resolve to that tenant.
 //
@@ -53,6 +57,41 @@ func WithTenant(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, fn 
 func setTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", TenantGUC, tenantID.String()); err != nil {
 		return fmt.Errorf("ragit: set tenant scope: %w", err)
+	}
+	return nil
+}
+
+// WithMaintenance runs fn in a transaction that can read and delete across
+// every tenant.
+//
+// This exists for one caller — the retention sweep — and the reason it needs
+// an escape at all is that the work is inherently cross-tenant: finding the
+// expired rows means reading rows whose owning tenants cannot be enumerated
+// beforehand, and enumerating them would itself be the cross-tenant read.
+//
+// It widens reads and deletes only. Migration 00003 leaves the policies'
+// WITH CHECK clause tenant-scoped, so nothing reached from here can write a
+// row into, or move a row between, tenants.
+//
+// Do not reach for this to make an ordinary query simpler. Every use is a
+// place where tenant isolation rests on the surrounding code being correct
+// rather than on the database, which is precisely what WithTenant exists to
+// avoid.
+func WithMaintenance(ctx context.Context, pool *pgxpool.Pool, fn func(*Queries) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ragit: begin maintenance transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "SELECT set_config($1, 'on', true)", MaintenanceGUC); err != nil {
+		return fmt.Errorf("ragit: enter maintenance scope: %w", err)
+	}
+	if err := fn(New(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ragit: commit maintenance transaction: %w", err)
 	}
 	return nil
 }

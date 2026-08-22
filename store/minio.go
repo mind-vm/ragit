@@ -79,6 +79,20 @@ func (s *MinIOStore) Get(ctx context.Context, uri string) (io.ReadCloser, error)
 	return obj, nil
 }
 
+// Delete removes the object at uri. S3 DELETE is already idempotent — it
+// reports success for a key that does not exist — so this needs no
+// special-casing to satisfy the interface's idempotency contract.
+func (s *MinIOStore) Delete(ctx context.Context, uri string) error {
+	bucket, key, err := parseURI(uri)
+	if err != nil {
+		return err
+	}
+	if err := s.client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("store: delete object: %w", err)
+	}
+	return nil
+}
+
 func parseURI(uri string) (bucket, key string, err error) {
 	if !strings.HasPrefix(uri, "s3://") {
 		return "", "", fmt.Errorf("store: not an s3 URI: %s", uri)

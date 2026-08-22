@@ -37,7 +37,23 @@ func (s *MemoryStore) Get(_ context.Context, uri string) (io.ReadCloser, error) 
 	defer s.mu.Unlock()
 	data, ok := s.objects[uri]
 	if !ok {
-		return nil, fmt.Errorf("store: no object at %s", uri)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, uri)
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+// Delete removes the object, if present. Missing is not an error.
+func (s *MemoryStore) Delete(_ context.Context, uri string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.objects, uri)
+	return nil
+}
+
+// Len reports how many objects are held, for tests asserting that a delete
+// actually purged the bytes rather than only the database row.
+func (s *MemoryStore) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.objects)
 }

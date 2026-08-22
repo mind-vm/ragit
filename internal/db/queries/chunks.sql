@@ -5,9 +5,9 @@
 -- is one round-trip anyway, and batches here are embedBatchSize-sized.
 INSERT INTO ragit_chunks (
   document_id, tenant_id, scope_id, session_id, chunk_index, heading_path,
-  content, embedding, embedding_fingerprint, metadata
+  content, embedding, embedding_fingerprint, metadata, expires_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 );
 
 -- name: GetChunksByDocumentID :many

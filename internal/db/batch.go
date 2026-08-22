@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,9 +23,9 @@ var (
 const createChunks = `-- name: CreateChunks :batchexec
 INSERT INTO ragit_chunks (
   document_id, tenant_id, scope_id, session_id, chunk_index, heading_path,
-  content, embedding, embedding_fingerprint, metadata
+  content, embedding, embedding_fingerprint, metadata, expires_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 `
 
@@ -45,6 +46,7 @@ type CreateChunksParams struct {
 	Embedding            *pgvector_go.Vector `json:"embedding"`
 	EmbeddingFingerprint *string             `json:"embedding_fingerprint"`
 	Metadata             json.RawMessage     `json:"metadata"`
+	ExpiresAt            *time.Time          `json:"expires_at"`
 }
 
 // Deliberately :batchexec and not :copyfrom. PostgreSQL rejects COPY FROM
@@ -65,6 +67,7 @@ func (q *Queries) CreateChunks(ctx context.Context, arg []CreateChunksParams) *C
 			a.Embedding,
 			a.EmbeddingFingerprint,
 			a.Metadata,
+			a.ExpiresAt,
 		}
 		batch.Queue(createChunks, vals...)
 	}

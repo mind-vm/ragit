@@ -15,10 +15,10 @@ import (
 
 const createDocument = `-- name: CreateDocument :one
 INSERT INTO ragit_documents (
-  tenant_id, scope_id, session_id, source_uri, filename, mime_type
+  tenant_id, scope_id, session_id, source_uri, filename, mime_type, expires_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6
-) RETURNING id, tenant_id, scope_id, session_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at
+  $1, $2, $3, $4, $5, $6, $7
+) RETURNING id, tenant_id, scope_id, session_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at, expires_at
 `
 
 type CreateDocumentParams struct {
@@ -28,6 +28,7 @@ type CreateDocumentParams struct {
 	SourceUri *string    `json:"source_uri"`
 	Filename  string     `json:"filename"`
 	MimeType  string     `json:"mime_type"`
+	ExpiresAt *time.Time `json:"expires_at"`
 }
 
 func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error) {
@@ -38,6 +39,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.SourceUri,
 		arg.Filename,
 		arg.MimeType,
+		arg.ExpiresAt,
 	)
 	var i Document
 	err := row.Scan(
@@ -57,6 +59,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.ProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -76,8 +79,36 @@ func (q *Queries) DeleteDocument(ctx context.Context, arg DeleteDocumentParams) 
 	return err
 }
 
+const deleteDocumentsByIDs = `-- name: DeleteDocumentsByIDs :execrows
+DELETE FROM ragit_documents WHERE id = ANY($1::uuid[])
+`
+
+// Cascades to ragit_chunks via the FK in migration 00001.
+func (q *Queries) DeleteDocumentsByIDs(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDocumentsByIDs, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteExpiredChunks = `-- name: DeleteExpiredChunks :execrows
+DELETE FROM ragit_chunks WHERE expires_at IS NOT NULL AND expires_at <= now()
+`
+
+// Chunks can outlive their document's retention clock when only the chunks
+// were given one (an attachment whose source file is still wanted). Runs
+// after the document sweep so it only sees genuinely orphaned expiries.
+func (q *Queries) DeleteExpiredChunks(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredChunks)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getDocumentByID = `-- name: GetDocumentByID :one
-SELECT id, tenant_id, scope_id, session_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at FROM ragit_documents WHERE id = $1 AND tenant_id = $2
+SELECT id, tenant_id, scope_id, session_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at, expires_at FROM ragit_documents WHERE id = $1 AND tenant_id = $2
 `
 
 type GetDocumentByIDParams struct {
@@ -105,8 +136,46 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 		&i.ProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const listExpiredDocuments = `-- name: ListExpiredDocuments :many
+SELECT id, tenant_id, source_uri
+FROM ragit_documents
+WHERE expires_at IS NOT NULL AND expires_at <= now()
+ORDER BY expires_at ASC
+LIMIT $1::int
+`
+
+type ListExpiredDocumentsRow struct {
+	ID        uuid.UUID `json:"id"`
+	TenantID  uuid.UUID `json:"tenant_id"`
+	SourceUri *string   `json:"source_uri"`
+}
+
+// Cross-tenant by design: the retention sweep cannot enumerate the tenants
+// that own expired rows without first reading across tenants. Runs under
+// db.WithMaintenance, which is the only place the maintenance GUC is set.
+func (q *Queries) ListExpiredDocuments(ctx context.Context, resultLimit int32) ([]ListExpiredDocumentsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredDocuments, resultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListExpiredDocumentsRow{}
+	for rows.Next() {
+		var i ListExpiredDocumentsRow
+		if err := rows.Scan(&i.ID, &i.TenantID, &i.SourceUri); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateDocumentError = `-- name: UpdateDocumentError :exec

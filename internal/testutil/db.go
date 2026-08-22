@@ -19,9 +19,12 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,9 +46,10 @@ const (
 )
 
 var (
-	once       sync.Once
-	appConnStr string
-	setupErr   error
+	once         sync.Once
+	appConnStr   string
+	adminConnStr string
+	setupErr     error
 )
 
 // SetupTestPool returns a pgxpool.Pool connected to a shared, migrated
@@ -132,7 +136,7 @@ func startAndMigrate() (string, error) {
 		return "", fmt.Errorf("start postgres container: %w", err)
 	}
 
-	adminConnStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	adminConnStr, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		return "", fmt.Errorf("get connection string: %w", err)
 	}
@@ -153,6 +157,63 @@ func startAndMigrate() (string, error) {
 	}
 
 	return rewriteCredentials(adminConnStr, appRole, appPassword)
+}
+
+// SetupScratchDatabase creates a fresh, empty database inside the shared
+// container and returns an admin pool to it.
+//
+// It exists so a test can run migrations — including rolling them back —
+// without touching the migrated database every other test shares. Rolling
+// back in the shared database would drop columns out from under whatever
+// happens to run next.
+func SetupScratchDatabase(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	if testing.Short() {
+		t.Skip("needs Postgres; skipped in -short mode")
+	}
+
+	once.Do(func() {
+		appConnStr, setupErr = startAndMigrate()
+	})
+	if setupErr != nil {
+		t.Fatalf("testutil: setup shared postgres: %v", setupErr)
+	}
+
+	ctx := context.Background()
+	adminPool, err := connectBare(ctx, adminConnStr)
+	if err != nil {
+		t.Fatalf("testutil: connect as admin: %v", err)
+	}
+	defer adminPool.Close()
+
+	// Database names cannot be parameterised, so this is interpolated — with
+	// a name this package generates rather than anything caller-supplied.
+	name := "scratch_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("testutil: create scratch database: %v", err)
+	}
+
+	scratchConnStr, err := rewriteDatabase(adminConnStr, name)
+	if err != nil {
+		t.Fatalf("testutil: build scratch connection string: %v", err)
+	}
+	pool, err := connectBare(ctx, scratchConnStr)
+	if err != nil {
+		t.Fatalf("testutil: connect to scratch database: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	return pool
+}
+
+func rewriteDatabase(connStr, database string) (string, error) {
+	u, err := url.Parse(connStr)
+	if err != nil {
+		return "", fmt.Errorf("parse connection url: %w", err)
+	}
+	u.Path = "/" + database
+	return u.String(), nil
 }
 
 func grantAppRole(ctx context.Context, pool *pgxpool.Pool) error {

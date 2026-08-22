@@ -50,6 +50,7 @@ type Document struct {
 	Error          string
 	ChunkCount     int
 	EmbeddingModel string
+	ExpiresAt      *time.Time
 }
 
 // DocumentInput describes a document to ingest.
@@ -64,6 +65,11 @@ type DocumentInput struct {
 	// one conversation or agent session. Such documents are excluded from
 	// ordinary library search unless a caller asks for that session by id.
 	SessionID *uuid.UUID
+	// ExpiresAt sets a retention clock on the document and its chunks. Nil
+	// means the document is kept until explicitly deleted. Session-scoped
+	// attachments are the expected user: they should not outlive the
+	// conversation that produced them.
+	ExpiresAt *time.Time
 	Filename  string
 	MimeType  string
 	Data      []byte
@@ -145,6 +151,7 @@ func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (uuid.
 			SourceUri: &uri,
 			Filename:  in.Filename,
 			MimeType:  in.MimeType,
+			ExpiresAt: in.ExpiresAt,
 		})
 		if err != nil {
 			return fmt.Errorf("ragit: create document row: %w", err)
@@ -299,6 +306,7 @@ func (p *Processor) Ingest(ctx context.Context, in DocumentInput) (*Document, er
 	if doc.EmbeddingModel != nil {
 		result.EmbeddingModel = *doc.EmbeddingModel
 	}
+	result.ExpiresAt = doc.ExpiresAt
 	return result, processErr
 }
 
@@ -332,16 +340,114 @@ func (p *Processor) MoveDocumentScope(ctx context.Context, documentID, tenantID 
 	})
 }
 
-// DeleteDocument removes a document and its chunks (cascaded via the FK).
-// It does not purge the original bytes from object storage — store.Store
-// has no delete operation yet; that's a deliberate gap, not an oversight.
+// DeleteDocument removes a document, its chunks (cascaded via the FK), and
+// the original bytes in object storage.
+//
+// The database row goes first. If the object-storage delete then fails, the
+// result is an orphaned object rather than a document that still answers
+// searches but whose bytes have vanished — the cheaper of the two
+// inconsistencies to live with, and the one a storage lifecycle rule can mop
+// up. The error is still returned so the caller knows it happened.
 func (p *Processor) DeleteDocument(ctx context.Context, documentID, tenantID uuid.UUID) error {
-	return p.withTenant(ctx, tenantID, func(q *db.Queries) error {
+	var sourceURI *string
+	if err := p.withTenant(ctx, tenantID, func(q *db.Queries) error {
+		doc, err := q.GetDocumentByID(ctx, db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
+		if err != nil {
+			return fmt.Errorf("ragit: load document for delete: %w", err)
+		}
+		sourceURI = doc.SourceUri
 		if err := q.DeleteDocument(ctx, db.DeleteDocumentParams{ID: documentID, TenantID: tenantID}); err != nil {
 			return fmt.Errorf("ragit: delete document: %w", err)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if sourceURI != nil {
+		if err := p.store.Delete(ctx, *sourceURI); err != nil {
+			return fmt.Errorf("ragit: purge stored document: %w", err)
+		}
+	}
+	return nil
+}
+
+// DeleteExpiredBatchSize bounds one retention sweep pass, so a large backlog
+// is worked through over several runs instead of one enormous transaction.
+const DeleteExpiredBatchSize = 500
+
+// RetentionResult reports what one DeleteExpired pass removed.
+type RetentionResult struct {
+	Documents int
+	Chunks    int
+	// ObjectErrors holds failures to purge object storage. They do not fail
+	// the sweep: the rows are already gone, and the next pass will not
+	// retry these objects, so surfacing them is the only way a caller learns
+	// about orphans.
+	ObjectErrors []error
+}
+
+// DeleteExpired removes documents and chunks whose retention clock has run
+// out, across every tenant, along with their stored bytes.
+//
+// It is cross-tenant, which is why it runs under db.WithMaintenance rather
+// than a tenant scope — see that function for why an escape is unavoidable
+// here. It processes at most DeleteExpiredBatchSize documents per call and
+// is safe to run on a schedule; see the jobs package for a River worker.
+func (p *Processor) DeleteExpired(ctx context.Context) (*RetentionResult, error) {
+	result := &RetentionResult{}
+
+	var expired []db.ListExpiredDocumentsRow
+	if err := db.WithMaintenance(ctx, p.pool, func(q *db.Queries) error {
+		var err error
+		expired, err = q.ListExpiredDocuments(ctx, DeleteExpiredBatchSize)
+		if err != nil {
+			return fmt.Errorf("ragit: list expired documents: %w", err)
+		}
+		if len(expired) == 0 {
+			return nil
+		}
+
+		ids := make([]uuid.UUID, len(expired))
+		for i, d := range expired {
+			ids[i] = d.ID
+		}
+		deleted, err := q.DeleteDocumentsByIDs(ctx, ids)
+		if err != nil {
+			return fmt.Errorf("ragit: delete expired documents: %w", err)
+		}
+		result.Documents = int(deleted)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Chunk-only expiries are swept separately, after the document pass, so
+	// this sees only chunks whose own clock ran out rather than ones already
+	// removed by the FK cascade above.
+	if err := db.WithMaintenance(ctx, p.pool, func(q *db.Queries) error {
+		deleted, err := q.DeleteExpiredChunks(ctx)
+		if err != nil {
+			return fmt.Errorf("ragit: delete expired chunks: %w", err)
+		}
+		result.Chunks = int(deleted)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Object storage is purged only after the rows are committed gone, so a
+	// crash mid-sweep leaves orphaned objects rather than rows pointing at
+	// bytes that no longer exist.
+	for _, d := range expired {
+		if d.SourceUri == nil {
+			continue
+		}
+		if err := p.store.Delete(ctx, *d.SourceUri); err != nil {
+			result.ObjectErrors = append(result.ObjectErrors, fmt.Errorf("purge %s: %w", *d.SourceUri, err))
+		}
+	}
+	return result, nil
 }
 
 func (p *Processor) extractAndChunk(ctx context.Context, data []byte, filename string) (*extract.Result, []chunk.Chunk, error) {
@@ -447,6 +553,7 @@ func (p *Processor) embedAndStore(ctx context.Context, doc *db.Document, chunks 
 				Embedding:            &vec,
 				EmbeddingFingerprint: &currentFP,
 				Metadata:             []byte("{}"),
+				ExpiresAt:            doc.ExpiresAt,
 			}
 		}
 

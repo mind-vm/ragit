@@ -90,7 +90,7 @@ func (q *Queries) GetChunkDigestsByDocumentID(ctx context.Context, arg GetChunkD
 }
 
 const getChunksByDocumentID = `-- name: GetChunksByDocumentID :many
-SELECT id, document_id, tenant_id, scope_id, session_id, chunk_index, heading_path, content, embedding, embedding_fingerprint, search_vector, metadata, created_at FROM ragit_chunks WHERE document_id = $1 AND tenant_id = $2 ORDER BY chunk_index ASC
+SELECT id, document_id, tenant_id, scope_id, session_id, chunk_index, heading_path, content, embedding, embedding_fingerprint, search_vector, metadata, created_at, expires_at FROM ragit_chunks WHERE document_id = $1 AND tenant_id = $2 ORDER BY chunk_index ASC
 `
 
 type GetChunksByDocumentIDParams struct {
@@ -121,6 +121,7 @@ func (q *Queries) GetChunksByDocumentID(ctx context.Context, arg GetChunksByDocu
 			&i.SearchVector,
 			&i.Metadata,
 			&i.CreatedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
