@@ -3,6 +3,7 @@ package embed_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -95,6 +96,58 @@ func TestClient_Embed_NarrowerResponse_IsError(t *testing.T) {
 	_, err = c.Embed(context.Background(), []string{"x"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot pad")
+}
+
+func TestClient_Embed_5xx_IsErrUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	c, err := embed.NewOpenAICompatible(embed.OpenAICompatibleConfig{APIKey: "k", BaseURL: server.URL})
+	require.NoError(t, err)
+
+	_, err = c.Embed(context.Background(), []string{"x"})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, embed.ErrUnavailable))
+}
+
+func TestClient_Embed_TransportFailure_IsErrUnavailable(t *testing.T) {
+	c, err := embed.NewOpenAICompatible(embed.OpenAICompatibleConfig{APIKey: "k", BaseURL: "http://127.0.0.1:1"})
+	require.NoError(t, err)
+
+	_, err = c.Embed(context.Background(), []string{"x"})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, embed.ErrUnavailable))
+}
+
+func TestClient_Embed_429_IsErrRateLimited(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	c, err := embed.NewOpenAICompatible(embed.OpenAICompatibleConfig{APIKey: "k", BaseURL: server.URL})
+	require.NoError(t, err)
+
+	_, err = c.Embed(context.Background(), []string{"x"})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, embed.ErrRateLimited))
+}
+
+func TestClient_Embed_Other4xx_IsPlainError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	c, err := embed.NewOpenAICompatible(embed.OpenAICompatibleConfig{APIKey: "bad-key", BaseURL: server.URL})
+	require.NoError(t, err)
+
+	_, err = c.Embed(context.Background(), []string{"x"})
+	require.Error(t, err)
+	require.False(t, errors.Is(err, embed.ErrUnavailable), "a bad API key is a permanent failure, not a reason to retry")
+	require.False(t, errors.Is(err, embed.ErrRateLimited))
 }
 
 func TestClient_Fingerprint_ReflectsProviderModelDimension(t *testing.T) {

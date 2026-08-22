@@ -13,6 +13,20 @@ import (
 	pgvector_go "github.com/pgvector/pgvector-go"
 )
 
+const clearDocumentChunks = `-- name: ClearDocumentChunks :exec
+DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2
+`
+
+type ClearDocumentChunksParams struct {
+	DocumentID uuid.UUID `json:"document_id"`
+	TenantID   uuid.UUID `json:"tenant_id"`
+}
+
+func (q *Queries) ClearDocumentChunks(ctx context.Context, arg ClearDocumentChunksParams) error {
+	_, err := q.db.Exec(ctx, clearDocumentChunks, arg.DocumentID, arg.TenantID)
+	return err
+}
+
 type CreateChunksParams struct {
 	DocumentID           uuid.UUID           `json:"document_id"`
 	TenantID             uuid.UUID           `json:"tenant_id"`
@@ -22,6 +36,46 @@ type CreateChunksParams struct {
 	Embedding            *pgvector_go.Vector `json:"embedding"`
 	EmbeddingFingerprint *string             `json:"embedding_fingerprint"`
 	Metadata             json.RawMessage     `json:"metadata"`
+}
+
+const getChunkDigestsByDocumentID = `-- name: GetChunkDigestsByDocumentID :many
+SELECT chunk_index, content, embedding_fingerprint
+FROM chunks
+WHERE document_id = $1 AND tenant_id = $2 AND embedding IS NOT NULL
+ORDER BY chunk_index ASC
+`
+
+type GetChunkDigestsByDocumentIDParams struct {
+	DocumentID uuid.UUID `json:"document_id"`
+	TenantID   uuid.UUID `json:"tenant_id"`
+}
+
+type GetChunkDigestsByDocumentIDRow struct {
+	ChunkIndex           int32   `json:"chunk_index"`
+	Content              string  `json:"content"`
+	EmbeddingFingerprint *string `json:"embedding_fingerprint"`
+}
+
+// Returns already-embedded chunks for a document so ProcessDocument can
+// resume an interrupted embedding run instead of re-embedding from scratch.
+func (q *Queries) GetChunkDigestsByDocumentID(ctx context.Context, arg GetChunkDigestsByDocumentIDParams) ([]GetChunkDigestsByDocumentIDRow, error) {
+	rows, err := q.db.Query(ctx, getChunkDigestsByDocumentID, arg.DocumentID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetChunkDigestsByDocumentIDRow{}
+	for rows.Next() {
+		var i GetChunkDigestsByDocumentIDRow
+		if err := rows.Scan(&i.ChunkIndex, &i.Content, &i.EmbeddingFingerprint); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getChunksByDocumentID = `-- name: GetChunksByDocumentID :many

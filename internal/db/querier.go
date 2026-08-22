@@ -11,13 +11,20 @@ import (
 )
 
 type Querier interface {
+	ClearDocumentChunks(ctx context.Context, arg ClearDocumentChunksParams) error
 	CreateChunks(ctx context.Context, arg []CreateChunksParams) (int64, error)
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error)
+	// Cascades to chunks via the FK in migration 00001.
+	DeleteDocument(ctx context.Context, arg DeleteDocumentParams) error
+	// Returns already-embedded chunks for a document so ProcessDocument can
+	// resume an interrupted embedding run instead of re-embedding from scratch.
+	GetChunkDigestsByDocumentID(ctx context.Context, arg GetChunkDigestsByDocumentIDParams) ([]GetChunkDigestsByDocumentIDRow, error)
 	GetChunksByDocumentID(ctx context.Context, arg GetChunksByDocumentIDParams) ([]Chunk, error)
 	GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams) (Document, error)
 	UpdateDocumentError(ctx context.Context, arg UpdateDocumentErrorParams) error
 	UpdateDocumentProcessing(ctx context.Context, id uuid.UUID) error
 	UpdateDocumentReady(ctx context.Context, arg UpdateDocumentReadyParams) error
+	UpdateDocumentSkippedTooLarge(ctx context.Context, arg UpdateDocumentSkippedTooLargeParams) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -144,7 +145,170 @@ func TestIngest_ExtractorRejectsDocument_MarksDocumentError(t *testing.T) {
 
 	tenantID := uuid.New()
 	doc, err := processor.Ingest(context.Background(), tenantID, "broken.pdf", "application/pdf", []byte("not a real pdf"))
-	require.NoError(t, err) // Ingest reports failure on the document, not as a Go error
+	require.Error(t, err) // the attempt failed — Ingest must not swallow it
+	require.NotNil(t, doc, "the document row is still returned, reflecting its persisted error state")
 	require.Equal(t, "error", doc.Status)
 	require.True(t, strings.Contains(doc.Error, "corrupt file"), "error was: %s", doc.Error)
+}
+
+// longFixture has no headings, so it chunks via SplitText's recursive
+// splitter. With a small chunk size it reliably produces enough chunks to
+// span multiple embedBatchSize(=10) batches, which the resume test needs.
+var longFixture = strings.Repeat("Lorem ipsum dolor sit amet, consectetur adipiscing elit. ", 60)
+
+func newExtractServer(t *testing.T, text string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{{"content": text, "mime_type": "text/markdown"}},
+			"errors":  []any{},
+		})
+	}))
+}
+
+// newEmbedServer returns a mock embeddings endpoint plus a running count of
+// how many texts it has successfully embedded (i.e. excluding any request
+// that got a simulated failure) — the tool the resume test uses to prove a
+// chunk already persisted is never sent for embedding again. Counting
+// totals rather than deduplicating by text content on purpose: fixture text
+// can legitimately produce byte-identical chunks, which would make a
+// seen-text-content check indistinguishable from a real double-embed.
+func newEmbedServer(t *testing.T, dim int, failOnCall int) (server *httptest.Server, totalEmbedded func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	total := 0
+	calls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+
+		mu.Lock()
+		calls++
+		thisCall := calls
+		mu.Unlock()
+
+		if failOnCall > 0 && thisCall == failOnCall {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("simulated failure"))
+			return
+		}
+
+		mu.Lock()
+		total += len(req.Input)
+		mu.Unlock()
+
+		data := make([]map[string]any, len(req.Input))
+		for i := range req.Input {
+			vec := make([]float32, dim)
+			vec[0] = 1 // non-zero, deterministic
+			data[i] = map[string]any{"index": i, "embedding": vec}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+	}))
+	return srv, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return total
+	}
+}
+
+func TestProcessDocument_ResumesAfterPartialEmbedFailure(t *testing.T) {
+	pool := testutil.SetupTestPool(t)
+
+	extractServer := newExtractServer(t, longFixture)
+	defer extractServer.Close()
+
+	const embedDim = 1536 // matches the fixed vector(1536) column in migrations/00001
+	// Fail on the 2nd embed call: batch 1 (chunks 0-9) succeeds, batch 2 fails.
+	embedServer, totalEmbedded := newEmbedServer(t, embedDim, 2)
+	defer embedServer.Close()
+
+	extractor := extract.NewXbergExtractor(extractServer.URL, 0)
+	embedder, err := embed.NewOpenAICompatible(embed.OpenAICompatibleConfig{APIKey: "k", BaseURL: embedServer.URL, Dimension: embedDim})
+	require.NoError(t, err)
+	chunker := chunk.New(chunk.Config{Size: 100, Overlap: 10})
+	processor := ragit.New(pool, extractor, chunker, embedder, store.NewMemoryStore())
+
+	wantChunks := chunker.SplitText(longFixture)
+	require.Greaterf(t, len(wantChunks), 10, "fixture must span at least two embedBatchSize(10) batches")
+
+	tenantID := uuid.New()
+	documentID, err := processor.CreateDocument(context.Background(), tenantID, "big.md", "text/markdown", []byte(longFixture))
+	require.NoError(t, err)
+
+	// First attempt: fails partway through embedding.
+	err = processor.ProcessDocument(context.Background(), documentID, tenantID)
+	require.Error(t, err)
+
+	queries := db.New(pool)
+	doc, err := queries.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
+	require.NoError(t, err)
+	require.Equal(t, "error", doc.Status)
+
+	partial, err := queries.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: documentID, TenantID: tenantID})
+	require.NoError(t, err)
+	require.Len(t, partial, 10, "the first, successful batch should already be persisted")
+
+	// Second attempt: the mock is healthy from here on.
+	err = processor.ProcessDocument(context.Background(), documentID, tenantID)
+	require.NoError(t, err)
+
+	doc, err = queries.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
+	require.NoError(t, err)
+	require.Equal(t, "ready", doc.Status)
+	require.NotNil(t, doc.ChunkCount)
+	require.Equal(t, len(wantChunks), int(*doc.ChunkCount))
+
+	final, err := queries.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: documentID, TenantID: tenantID})
+	require.NoError(t, err)
+	require.Len(t, final, len(wantChunks))
+
+	// The core claim of this phase: across both attempts, exactly one text
+	// was embedded per chunk — the first batch was never billed again on
+	// the retry, only the remaining, not-yet-embedded chunks were.
+	require.Equal(t, len(wantChunks), totalEmbedded())
+}
+
+func TestProcessDocument_MaxChunksPerDocument_SkipsTooLarge(t *testing.T) {
+	pool := testutil.SetupTestPool(t)
+
+	extractServer := newExtractServer(t, longFixture)
+	defer extractServer.Close()
+
+	embedCalled := false
+	embedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		embedCalled = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer embedServer.Close()
+
+	extractor := extract.NewXbergExtractor(extractServer.URL, 0)
+	embedder, err := embed.NewOpenAICompatible(embed.OpenAICompatibleConfig{APIKey: "k", BaseURL: embedServer.URL})
+	require.NoError(t, err)
+	chunker := chunk.New(chunk.Config{Size: 100, Overlap: 10})
+	processor := ragit.New(pool, extractor, chunker, embedder, store.NewMemoryStore()).WithMaxChunksPerDocument(3)
+
+	tenantID := uuid.New()
+	documentID, err := processor.CreateDocument(context.Background(), tenantID, "big.md", "text/markdown", []byte(longFixture))
+	require.NoError(t, err)
+
+	err = processor.ProcessDocument(context.Background(), documentID, tenantID)
+	require.NoError(t, err, "the guardrail is a deliberate quarantine, not a Go error")
+	require.False(t, embedCalled, "embedding must never be called once the chunk cap is exceeded")
+
+	queries := db.New(pool)
+	doc, err := queries.GetDocumentByID(context.Background(), db.GetDocumentByIDParams{ID: documentID, TenantID: tenantID})
+	require.NoError(t, err)
+	require.Equal(t, "skipped_too_large", doc.Status)
+	require.NotNil(t, doc.ChunkCount)
+	require.Zero(t, *doc.ChunkCount)
+
+	chunks, err := queries.GetChunksByDocumentID(context.Background(), db.GetChunksByDocumentIDParams{DocumentID: documentID, TenantID: tenantID})
+	require.NoError(t, err)
+	require.Empty(t, chunks)
 }

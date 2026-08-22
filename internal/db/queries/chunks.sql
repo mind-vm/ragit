@@ -7,3 +7,14 @@ INSERT INTO chunks (
 
 -- name: GetChunksByDocumentID :many
 SELECT * FROM chunks WHERE document_id = $1 AND tenant_id = $2 ORDER BY chunk_index ASC;
+
+-- name: GetChunkDigestsByDocumentID :many
+-- Returns already-embedded chunks for a document so ProcessDocument can
+-- resume an interrupted embedding run instead of re-embedding from scratch.
+SELECT chunk_index, content, embedding_fingerprint
+FROM chunks
+WHERE document_id = $1 AND tenant_id = $2 AND embedding IS NOT NULL
+ORDER BY chunk_index ASC;
+
+-- name: ClearDocumentChunks :exec
+DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2;

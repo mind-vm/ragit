@@ -28,3 +28,15 @@ UPDATE documents SET
   error = $2,
   updated_at = now()
 WHERE id = $1;
+
+-- name: UpdateDocumentSkippedTooLarge :exec
+UPDATE documents SET
+  status = 'skipped_too_large',
+  error = $2,
+  chunk_count = 0,
+  updated_at = now()
+WHERE id = $1;
+
+-- name: DeleteDocument :exec
+-- Cascades to chunks via the FK in migration 00001.
+DELETE FROM documents WHERE id = $1 AND tenant_id = $2;

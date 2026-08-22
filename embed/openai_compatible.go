@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -11,6 +12,15 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrUnavailable marks a transport/deployment failure — network error or a
+// 5xx from the embedding service itself. Retryable: the request, not the
+// input, is at fault.
+var ErrUnavailable = errors.New("embedding service unavailable")
+
+// ErrRateLimited marks a 429. Retryable, but worth a longer, deliberate
+// backoff than a transient failure — see [ErrUnavailable].
+var ErrRateLimited = errors.New("embedding service rate limited")
 
 const (
 	// DefaultBaseURL is EdenAI's EU-region gateway — keeps embedding
@@ -143,11 +153,24 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([]Vector, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("embed: request: %w", err)
+		// Connection refused, DNS failure, client timeout — the service, not
+		// the request.
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		// fall through
+	case resp.StatusCode == http.StatusTooManyRequests:
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("%w: %s", ErrRateLimited, strings.TrimSpace(string(snippet)))
+	case resp.StatusCode >= 500:
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("%w: http %d: %s", ErrUnavailable, resp.StatusCode, strings.TrimSpace(string(snippet)))
+	default:
+		// Any other 4xx (bad API key, malformed request, ...) is a real,
+		// permanent failure — not a reason to retry.
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return nil, fmt.Errorf("embed: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}

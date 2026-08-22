@@ -55,6 +55,21 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 	return i, err
 }
 
+const deleteDocument = `-- name: DeleteDocument :exec
+DELETE FROM documents WHERE id = $1 AND tenant_id = $2
+`
+
+type DeleteDocumentParams struct {
+	ID       uuid.UUID `json:"id"`
+	TenantID uuid.UUID `json:"tenant_id"`
+}
+
+// Cascades to chunks via the FK in migration 00001.
+func (q *Queries) DeleteDocument(ctx context.Context, arg DeleteDocumentParams) error {
+	_, err := q.db.Exec(ctx, deleteDocument, arg.ID, arg.TenantID)
+	return err
+}
+
 const getDocumentByID = `-- name: GetDocumentByID :one
 SELECT id, tenant_id, source_uri, filename, mime_type, status, error, text_content, metadata, chunk_count, embedding_model, processed_at, created_at, updated_at FROM documents WHERE id = $1 AND tenant_id = $2
 `
@@ -143,5 +158,24 @@ func (q *Queries) UpdateDocumentReady(ctx context.Context, arg UpdateDocumentRea
 		arg.EmbeddingModel,
 		arg.ProcessedAt,
 	)
+	return err
+}
+
+const updateDocumentSkippedTooLarge = `-- name: UpdateDocumentSkippedTooLarge :exec
+UPDATE documents SET
+  status = 'skipped_too_large',
+  error = $2,
+  chunk_count = 0,
+  updated_at = now()
+WHERE id = $1
+`
+
+type UpdateDocumentSkippedTooLargeParams struct {
+	ID    uuid.UUID `json:"id"`
+	Error *string   `json:"error"`
+}
+
+func (q *Queries) UpdateDocumentSkippedTooLarge(ctx context.Context, arg UpdateDocumentSkippedTooLargeParams) error {
+	_, err := q.db.Exec(ctx, updateDocumentSkippedTooLarge, arg.ID, arg.Error)
 	return err
 }
