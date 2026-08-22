@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jryannel/sqlb"
@@ -60,9 +61,9 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 // postgres image's POSTGRES_USER is a superuser, so an application connecting
 // as one has these policies silently inert and is relying on the predicates
 // alone. See [NewPool].
-func WithTenant(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn func(sqlb.Executor) error) error {
+func WithTenant(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, fn func(sqlb.Executor) error) error {
 	return inTx(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", TenantGUC, tenantID); err != nil {
+		if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", TenantGUC, tenantID.String()); err != nil {
 			return fmt.Errorf("ragit: set tenant scope: %w", err)
 		}
 		return fn(tx)

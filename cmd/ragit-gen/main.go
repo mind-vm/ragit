@@ -42,6 +42,18 @@ func main() {
 	}
 }
 
+// typeOverrides render uuid columns as uuid.UUID rather than sqlb's default
+// string.
+//
+// An override is a rendering decision: it reaches neither the SQL type nor the
+// wire, so the column stays `uuid` in Postgres either way. What it buys is that
+// an id is a type rather than any string that happens to be lying around —
+// uuid.UUID cannot hold "hello", and a mixed-up argument order fails to compile
+// instead of failing at the database.
+var typeOverrides = []codegen.TypeOverride{
+	{Type: schema.TypeUUID, GoType: "uuid.UUID", Import: "github.com/google/uuid"},
+}
+
 // The migrations this command owns, and may therefore rewrite under -force.
 const (
 	initialMigrationName     = "initial_schema"
@@ -71,6 +83,7 @@ func run(dim int, outDir, modelDir, modelPkg string, skipModels, force bool) err
 		ColumnsFile:  "columns_gen.go",
 		ManifestFile: "-",
 		RestFile:     "-",
+		Types:        typeOverrides,
 	})
 	if err != nil {
 		return fmt.Errorf("generate models: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jryannel/sqlb"
 )
 
@@ -29,7 +30,7 @@ type ListFilter struct {
 // same as one that does not exist. Distinguishing the two would tell a caller
 // that a document id is real and belongs to someone else, which is itself a
 // disclosure.
-func (p *Processor) GetDocument(ctx context.Context, scope Scope, documentID string) (*Document, error) {
+func (p *Processor) GetDocument(ctx context.Context, scope Scope, documentID uuid.UUID) (*Document, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
@@ -117,7 +118,7 @@ func (p *Processor) CountDocuments(ctx context.Context, scope Scope, filter List
 
 // ListChunks returns a document's chunks in order, confined to scope. Useful
 // for showing what was indexed, and for debugging a chunker change.
-func (p *Processor) ListChunks(ctx context.Context, scope Scope, documentID string) ([]Chunk, error) {
+func (p *Processor) ListChunks(ctx context.Context, scope Scope, documentID uuid.UUID) ([]Chunk, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}

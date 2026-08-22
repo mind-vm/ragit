@@ -119,7 +119,7 @@ func (h *harness) ingest(t *testing.T, in ragit.DocumentInput) *ragit.Document {
 
 func TestVectorSearch_RanksByCosineSimilarity(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	pgDoc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
@@ -144,7 +144,7 @@ func TestVectorSearch_RanksByCosineSimilarity(t *testing.T) {
 
 func TestVectorSearch_MinScoreDropsWeakMatches(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	pgDoc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
@@ -164,7 +164,7 @@ func TestVectorSearch_MinScoreDropsWeakMatches(t *testing.T) {
 
 func TestVectorSearch_IgnoresChunksFromAnotherEmbeddingSpace(t *testing.T) {
 	h := newHarness(t, "provider-a")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
@@ -202,7 +202,7 @@ func TestVectorSearch_IgnoresChunksFromAnotherEmbeddingSpace(t *testing.T) {
 
 func TestFullTextSearch_MatchesContentAndRanks(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	pgDoc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
@@ -231,7 +231,7 @@ func TestFullTextSearch_MatchesContentAndRanks(t *testing.T) {
 
 func TestFullTextSearch_UsesSimpleConfigNotEnglishStemming(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
@@ -250,7 +250,7 @@ func TestFullTextSearch_UsesSimpleConfigNotEnglishStemming(t *testing.T) {
 
 func TestSearch_IsolatesTenants(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantA, tenantB := uuid.NewString(), uuid.NewString()
+	tenantA, tenantB := uuid.New(), uuid.New()
 
 	h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantA, Filename: "db.md", MimeType: "text/markdown",
@@ -272,7 +272,7 @@ func TestSearch_IsolatesTenants(t *testing.T) {
 // fails rather than returning everything.
 func TestSearch_ZeroScopeIsRefused(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
 		Data: []byte("Postgres stores relational data durably."),
@@ -290,15 +290,15 @@ func TestSearch_ZeroScopeIsRefused(t *testing.T) {
 	_, err = h.processor.ListDocuments(ctx, forgotten, ragit.ListFilter{})
 	require.ErrorIs(t, err, ragit.ErrUnscoped, "a catalog read is as much a boundary as a retrieval")
 
-	_, err = h.processor.GetDocument(ctx, forgotten, uuid.NewString())
+	_, err = h.processor.GetDocument(ctx, forgotten, uuid.New())
 	require.ErrorIs(t, err, ragit.ErrUnscoped)
 }
 
 func TestSearch_ScopeDimensionsAreRestrictiveByDefault(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
-	companyA, companyB := uuid.NewString(), uuid.NewString()
-	coach := uuid.NewString()
+	tenantID := uuid.New()
+	companyA, companyB := uuid.New(), uuid.New()
+	coach := uuid.New()
 
 	unscoped := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "shared.md", MimeType: "text/markdown",
@@ -319,10 +319,10 @@ func TestSearch_ScopeDimensionsAreRestrictiveByDefault(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	search := func(s ragit.Scope) []string {
+	search := func(s ragit.Scope) []uuid.UUID {
 		results, err := h.processor.VectorSearch(ctx, s, "postgres", ragit.SearchOptions{TopK: 20})
 		require.NoError(t, err)
-		ids := make([]string, len(results))
+		ids := make([]uuid.UUID, len(results))
 		for i, r := range results {
 			ids[i] = r.DocumentID
 		}
@@ -330,15 +330,15 @@ func TestSearch_ScopeDimensionsAreRestrictiveByDefault(t *testing.T) {
 	}
 
 	// A dimension nobody mentioned matches only rows that have no value there.
-	require.ElementsMatch(t, []string{unscoped.ID}, search(ragit.Tenant(tenantID)),
+	require.ElementsMatch(t, []uuid.UUID{unscoped.ID}, search(ragit.Tenant(tenantID)),
 		"an unmentioned scope dimension must not return every scope's rows")
 
 	// Naming a scope selects it — and still not the pair, whose scope B is set.
-	require.ElementsMatch(t, []string{inA.ID}, search(ragit.Tenant(tenantID).A(companyA)))
+	require.ElementsMatch(t, []uuid.UUID{inA.ID}, search(ragit.Tenant(tenantID).A(companyA)))
 
 	// The pair needs both halves named, which is the case a single scope
 	// column could not express.
-	require.ElementsMatch(t, []string{pair.ID}, search(ragit.Tenant(tenantID).A(companyA).B(coach)))
+	require.ElementsMatch(t, []uuid.UUID{pair.ID}, search(ragit.Tenant(tenantID).A(companyA).B(coach)))
 
 	// Unbounded access is a separate predicate, not a magic scope value.
 	require.Len(t, search(ragit.Tenant(tenantID).AnyA().AnyB()), 4)
@@ -350,8 +350,8 @@ func TestSearch_ScopeDimensionsAreRestrictiveByDefault(t *testing.T) {
 
 func TestSearch_ExcludesSessionChunksUnlessAsked(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
-	sessionID := uuid.NewString()
+	tenantID := uuid.New()
+	sessionID := uuid.New()
 
 	libraryDoc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "library.md", MimeType: "text/markdown",
@@ -375,7 +375,7 @@ func TestSearch_ExcludesSessionChunksUnlessAsked(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
-	found := map[string]bool{}
+	found := map[uuid.UUID]bool{}
 	for _, r := range results {
 		found[r.DocumentID] = true
 	}
@@ -383,7 +383,7 @@ func TestSearch_ExcludesSessionChunksUnlessAsked(t *testing.T) {
 	require.True(t, found[sessionDoc.ID])
 
 	// A different session sees the library, not another session's file.
-	results, err = h.processor.VectorSearch(ctx, ragit.Tenant(tenantID).Session(uuid.NewString()), "postgres", ragit.SearchOptions{TopK: 10})
+	results, err = h.processor.VectorSearch(ctx, ragit.Tenant(tenantID).Session(uuid.New()), "postgres", ragit.SearchOptions{TopK: 10})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, libraryDoc.ID, results[0].DocumentID)
@@ -391,8 +391,8 @@ func TestSearch_ExcludesSessionChunksUnlessAsked(t *testing.T) {
 
 func TestMoveDocumentScope_ResyncsChunks(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
-	oldScope, newScope := uuid.NewString(), uuid.NewString()
+	tenantID := uuid.New()
+	oldScope, newScope := uuid.New(), uuid.New()
 
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, ScopeA: &oldScope, Filename: "a.md", MimeType: "text/markdown",
@@ -417,7 +417,7 @@ func TestMoveDocumentScope_ResyncsChunks(t *testing.T) {
 
 func TestVectorSearch_ReturnsCitationMetadata(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "handbook.md", MimeType: "text/markdown",
@@ -432,7 +432,7 @@ func TestVectorSearch_ReturnsCitationMetadata(t *testing.T) {
 	top := results[0]
 	require.Equal(t, doc.ID, top.DocumentID)
 	require.Equal(t, "handbook.md", top.Filename)
-	require.NotEmpty(t, top.ChunkID)
+	require.NotEqual(t, uuid.Nil, top.ChunkID)
 	require.Equal(t, []string{"Handbook", "Storage"}, top.HeadingPath,
 		"citations need the heading trail the chunker recorded")
 }

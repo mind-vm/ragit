@@ -58,7 +58,7 @@ func TestIngest_EndToEnd(t *testing.T) {
 		store.NewMemoryStore(),
 	)
 
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	doc, err := processor.Ingest(context.Background(), ragit.DocumentInput{
 		TenantID: tenantID, Filename: "handbook.md", MimeType: "text/markdown",
 		Data: []byte(markdownFixture),
@@ -115,7 +115,7 @@ func TestIngest_ExtractorRejectsDocument_MarksDocumentError(t *testing.T) {
 		extract.NewXbergExtractor(extractServer.URL, 0),
 		chunk.New(chunk.DefaultConfig()), embedder, store.NewMemoryStore())
 
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	doc, err := processor.Ingest(context.Background(), ragit.DocumentInput{
 		TenantID: tenantID, Filename: "broken.pdf", MimeType: "application/pdf",
 		Data: []byte("not a real pdf"),
@@ -214,7 +214,7 @@ func TestProcessDocument_ResumesAfterPartialEmbedFailure(t *testing.T) {
 	require.Greater(t, len(wantChunks), 10, "fixture must span at least two batches")
 
 	ctx := context.Background()
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	scope := ragit.Tenant(tenantID)
 
 	documentID, err := processor.CreateDocument(ctx, ragit.DocumentInput{
@@ -272,7 +272,7 @@ func TestProcessDocument_MaxChunksPerDocument_SkipsTooLarge(t *testing.T) {
 		WithMaxChunksPerDocument(3)
 
 	ctx := context.Background()
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	documentID, err := processor.CreateDocument(ctx, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "big.md", MimeType: "text/markdown",

@@ -6,16 +6,17 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jryannel/sqlb"
 )
 
 type chunkColumns struct {
-	ID                   sqlb.Col[string]
-	DocumentID           sqlb.Col[string]
-	TenantID             sqlb.Col[string]
-	ScopeAID             sqlb.Col[string]
-	ScopeBID             sqlb.Col[string]
-	SessionID            sqlb.Col[string]
+	ID                   sqlb.Col[uuid.UUID]
+	DocumentID           sqlb.Col[uuid.UUID]
+	TenantID             sqlb.Col[uuid.UUID]
+	ScopeAID             sqlb.Col[uuid.UUID]
+	ScopeBID             sqlb.Col[uuid.UUID]
+	SessionID            sqlb.Col[uuid.UUID]
 	ChunkIndex           sqlb.Col[int32]
 	HeadingPath          sqlb.ArrayCol[string]
 	Content              sqlb.TextCol[string]
@@ -31,12 +32,12 @@ type chunkColumns struct {
 // Declaring LookupKey beside Hidden returns one to this facade, for the column
 // whose own value is how the row is found. It stays off the wire either way.
 var ChunkCols = chunkColumns{
-	ID:                   sqlb.Typed[string]("id"),
-	DocumentID:           sqlb.Typed[string]("document_id"),
-	TenantID:             sqlb.Typed[string]("tenant_id"),
-	ScopeAID:             sqlb.Typed[string]("scope_a_id"),
-	ScopeBID:             sqlb.Typed[string]("scope_b_id"),
-	SessionID:            sqlb.Typed[string]("session_id"),
+	ID:                   sqlb.Typed[uuid.UUID]("id"),
+	DocumentID:           sqlb.Typed[uuid.UUID]("document_id"),
+	TenantID:             sqlb.Typed[uuid.UUID]("tenant_id"),
+	ScopeAID:             sqlb.Typed[uuid.UUID]("scope_a_id"),
+	ScopeBID:             sqlb.Typed[uuid.UUID]("scope_b_id"),
+	SessionID:            sqlb.Typed[uuid.UUID]("session_id"),
 	ChunkIndex:           sqlb.Typed[int32]("chunk_index"),
 	HeadingPath:          sqlb.ArrayColumn[string]("heading_path"),
 	Content:              sqlb.TextColumn[string]("content"),
@@ -57,31 +58,31 @@ func UpdateChunk() *ChunkUpdate {
 }
 
 // SetDocumentID sets document_id.
-func (u *ChunkUpdate) SetDocumentID(v string) *ChunkUpdate {
+func (u *ChunkUpdate) SetDocumentID(v uuid.UUID) *ChunkUpdate {
 	u.stmt.Set("document_id", v)
 	return u
 }
 
 // SetTenantID sets tenant_id.
-func (u *ChunkUpdate) SetTenantID(v string) *ChunkUpdate {
+func (u *ChunkUpdate) SetTenantID(v uuid.UUID) *ChunkUpdate {
 	u.stmt.Set("tenant_id", v)
 	return u
 }
 
 // SetScopeAID sets scope_a_id.
-func (u *ChunkUpdate) SetScopeAID(v *string) *ChunkUpdate {
+func (u *ChunkUpdate) SetScopeAID(v *uuid.UUID) *ChunkUpdate {
 	u.stmt.Set("scope_a_id", v)
 	return u
 }
 
 // SetScopeBID sets scope_b_id.
-func (u *ChunkUpdate) SetScopeBID(v *string) *ChunkUpdate {
+func (u *ChunkUpdate) SetScopeBID(v *uuid.UUID) *ChunkUpdate {
 	u.stmt.Set("scope_b_id", v)
 	return u
 }
 
 // SetSessionID sets session_id.
-func (u *ChunkUpdate) SetSessionID(v *string) *ChunkUpdate {
+func (u *ChunkUpdate) SetSessionID(v *uuid.UUID) *ChunkUpdate {
 	u.stmt.Set("session_id", v)
 	return u
 }
@@ -145,11 +146,11 @@ func (u *ChunkUpdate) Where(preds ...sqlb.Pred) *ChunkUpdate {
 func (u *ChunkUpdate) Stmt() *sqlb.Update[Chunk] { return u.stmt }
 
 type documentColumns struct {
-	ID             sqlb.Col[string]
-	TenantID       sqlb.Col[string]
-	ScopeAID       sqlb.Col[string]
-	ScopeBID       sqlb.Col[string]
-	SessionID      sqlb.Col[string]
+	ID             sqlb.Col[uuid.UUID]
+	TenantID       sqlb.Col[uuid.UUID]
+	ScopeAID       sqlb.Col[uuid.UUID]
+	ScopeBID       sqlb.Col[uuid.UUID]
+	SessionID      sqlb.Col[uuid.UUID]
 	SourceURI      sqlb.TextCol[string]
 	Filename       sqlb.TextCol[string]
 	MimeType       sqlb.TextCol[string]
@@ -167,11 +168,11 @@ type documentColumns struct {
 
 // DocumentCols are the typed columns of ragit_documents.
 var DocumentCols = documentColumns{
-	ID:             sqlb.Typed[string]("id"),
-	TenantID:       sqlb.Typed[string]("tenant_id"),
-	ScopeAID:       sqlb.Typed[string]("scope_a_id"),
-	ScopeBID:       sqlb.Typed[string]("scope_b_id"),
-	SessionID:      sqlb.Typed[string]("session_id"),
+	ID:             sqlb.Typed[uuid.UUID]("id"),
+	TenantID:       sqlb.Typed[uuid.UUID]("tenant_id"),
+	ScopeAID:       sqlb.Typed[uuid.UUID]("scope_a_id"),
+	ScopeBID:       sqlb.Typed[uuid.UUID]("scope_b_id"),
+	SessionID:      sqlb.Typed[uuid.UUID]("session_id"),
 	SourceURI:      sqlb.TextColumn[string]("source_uri"),
 	Filename:       sqlb.TextColumn[string]("filename"),
 	MimeType:       sqlb.TextColumn[string]("mime_type"),
@@ -198,25 +199,25 @@ func UpdateDocument() *DocumentUpdate {
 }
 
 // SetTenantID sets tenant_id.
-func (u *DocumentUpdate) SetTenantID(v string) *DocumentUpdate {
+func (u *DocumentUpdate) SetTenantID(v uuid.UUID) *DocumentUpdate {
 	u.stmt.Set("tenant_id", v)
 	return u
 }
 
 // SetScopeAID sets scope_a_id.
-func (u *DocumentUpdate) SetScopeAID(v *string) *DocumentUpdate {
+func (u *DocumentUpdate) SetScopeAID(v *uuid.UUID) *DocumentUpdate {
 	u.stmt.Set("scope_a_id", v)
 	return u
 }
 
 // SetScopeBID sets scope_b_id.
-func (u *DocumentUpdate) SetScopeBID(v *string) *DocumentUpdate {
+func (u *DocumentUpdate) SetScopeBID(v *uuid.UUID) *DocumentUpdate {
 	u.stmt.Set("scope_b_id", v)
 	return u
 }
 
 // SetSessionID sets session_id.
-func (u *DocumentUpdate) SetSessionID(v *string) *DocumentUpdate {
+func (u *DocumentUpdate) SetSessionID(v *uuid.UUID) *DocumentUpdate {
 	u.stmt.Set("session_id", v)
 	return u
 }

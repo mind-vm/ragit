@@ -14,7 +14,7 @@ import (
 
 func TestDeleteDocument_PurgesStoredBytes(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
@@ -33,8 +33,8 @@ func TestDeleteDocument_PurgesStoredBytes(t *testing.T) {
 
 func TestDeleteExpired_RemovesOnlyExpiredDocuments(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
-	sessionID := uuid.NewString()
+	tenantID := uuid.New()
+	sessionID := uuid.New()
 
 	past := time.Now().Add(-time.Hour)
 	future := time.Now().Add(time.Hour)
@@ -79,7 +79,7 @@ func TestDeleteExpired_RemovesOnlyExpiredDocuments(t *testing.T) {
 
 func TestDeleteExpired_SweepsAcrossTenants(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantA, tenantB := uuid.NewString(), uuid.NewString()
+	tenantA, tenantB := uuid.New(), uuid.New()
 	past := time.Now().Add(-time.Hour)
 
 	docA := h.ingest(t, ragit.DocumentInput{
@@ -107,7 +107,7 @@ func TestDeleteExpired_SweepsAcrossTenants(t *testing.T) {
 
 func TestDeleteExpired_IsIdempotent(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	past := time.Now().Add(-time.Hour)
 
 	h.ingest(t, ragit.DocumentInput{
@@ -134,7 +134,7 @@ func TestDeleteExpired_IsIdempotent(t *testing.T) {
 // clock has run out while its document's has not.
 func TestDeleteExpired_RemovesExpiredChunksWhoseDocumentLives(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "library.md", MimeType: "text/markdown",
@@ -177,7 +177,7 @@ func TestMaintenanceScope_CannotWriteAcrossTenants(t *testing.T) {
 	err := ragit.WithMaintenance(ctx, pool, func(db sqlb.Executor) error {
 		_, err := db.Exec(ctx,
 			"INSERT INTO ragit_documents (tenant_id, filename, mime_type) VALUES ($1, $2, $3)",
-			uuid.NewString(), "smuggled.md", "text/markdown")
+			uuid.New(), "smuggled.md", "text/markdown")
 		return err
 	})
 	require.Error(t, err)
@@ -189,7 +189,7 @@ func TestMaintenanceScope_CannotWriteAcrossTenants(t *testing.T) {
 // future query issued outside WithTenant, which no API-level test would catch.
 func TestRLS_FailsClosedWithoutTenantScope(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",

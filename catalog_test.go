@@ -18,7 +18,7 @@ import (
 
 func TestCatalog_ListAndGetDocuments(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	ctx := context.Background()
 
 	first := h.ingest(t, ragit.DocumentInput{
@@ -71,7 +71,7 @@ func TestCatalog_ListAndGetDocuments(t *testing.T) {
 // saying "it exists, but not for you" is itself a disclosure.
 func TestCatalog_OutOfScopeIsIndistinguishableFromMissing(t *testing.T) {
 	h := newHarness(t, "acme")
-	tenantA, tenantB := uuid.NewString(), uuid.NewString()
+	tenantA, tenantB := uuid.New(), uuid.New()
 	ctx := context.Background()
 
 	doc := h.ingest(t, ragit.DocumentInput{
@@ -79,7 +79,7 @@ func TestCatalog_OutOfScopeIsIndistinguishableFromMissing(t *testing.T) {
 		Data: []byte("Postgres for tenant A only."),
 	})
 
-	_, realMiss := h.processor.GetDocument(ctx, ragit.Tenant(tenantB), uuid.NewString())
+	_, realMiss := h.processor.GetDocument(ctx, ragit.Tenant(tenantB), uuid.New())
 	_, crossTenant := h.processor.GetDocument(ctx, ragit.Tenant(tenantB), doc.ID)
 
 	require.ErrorIs(t, realMiss, ragit.ErrNotFound)
@@ -107,7 +107,7 @@ func TestCatalog_SurfacesFailureReason(t *testing.T) {
 	processor := ragit.New(pool, extract.NewXbergExtractor(extractServer.URL, 0),
 		chunk.New(chunk.DefaultConfig()), embedder, store.NewMemoryStore())
 
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	_, err = processor.Ingest(ctx, ragit.DocumentInput{
 		TenantID: tenantID, Filename: "locked.pdf", MimeType: "application/pdf",
 		Data: []byte("%PDF-1.4 encrypted"),

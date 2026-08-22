@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jryannel/sqlb"
 )
 
@@ -39,36 +40,36 @@ var ErrUnscoped = errors.New("ragit: query has no tenant scope")
 // sentinel is one careless equality away from being treated as a real scope,
 // and that failure is silent.
 type Scope struct {
-	tenantID string
+	tenantID uuid.UUID
 
-	scopeA    []string
-	scopeB    []string
-	sessionID *string
+	scopeA    []uuid.UUID
+	scopeB    []uuid.UUID
+	sessionID *uuid.UUID
 
 	anyA, anyB bool
 }
 
 // Tenant begins a scope confined to one tenant. Every other dimension starts
 // restrictive; widen explicitly.
-func Tenant(tenantID string) Scope { return Scope{tenantID: tenantID} }
+func Tenant(tenantID uuid.UUID) Scope { return Scope{tenantID: tenantID} }
 
 // A restricts to the given scope-A values.
 //
 // Passing no values matches nothing rather than everything, so a caller that
 // computes a permitted set and finds it empty gets an empty result rather than
 // the whole tenant.
-func (s Scope) A(ids ...string) Scope {
+func (s Scope) A(ids ...uuid.UUID) Scope {
 	// make, not append to a nil slice: append with no elements yields nil,
 	// which this type reads as "never mentioned" — the opposite of what an
 	// explicitly empty permitted set means.
-	s.scopeA = append(make([]string, 0, len(ids)), ids...)
+	s.scopeA = append(make([]uuid.UUID, 0, len(ids)), ids...)
 	s.anyA = false
 	return s
 }
 
 // B restricts to the given scope-B values. See [Scope.A].
-func (s Scope) B(ids ...string) Scope {
-	s.scopeB = append(make([]string, 0, len(ids)), ids...)
+func (s Scope) B(ids ...uuid.UUID) Scope {
+	s.scopeB = append(make([]uuid.UUID, 0, len(ids)), ids...)
 	s.anyB = false
 	return s
 }
@@ -84,15 +85,15 @@ func (s Scope) AnyB() Scope { s.anyB, s.scopeB = true, nil; return s }
 // durable library. Without it, no session-scoped row is visible at all — an
 // attachment uploaded into one conversation does not surface in another
 // caller's search because a filter was forgotten.
-func (s Scope) Session(id string) Scope { s.sessionID = &id; return s }
+func (s Scope) Session(id uuid.UUID) Scope { s.sessionID = &id; return s }
 
 // TenantID returns the tenant this scope is confined to.
-func (s Scope) TenantID() string { return s.tenantID }
+func (s Scope) TenantID() uuid.UUID { return s.tenantID }
 
 // Validate reports whether the scope can be used. A scope with no tenant is
 // the zero value, or close enough to it to be a bug.
 func (s Scope) Validate() error {
-	if s.tenantID == "" {
+	if s.tenantID == uuid.Nil {
 		return fmt.Errorf("%w: build one with ragit.Tenant(tenantID)", ErrUnscoped)
 	}
 	return nil
@@ -126,7 +127,7 @@ func (s Scope) preds() []sqlb.Pred {
 // dimension renders one scope column. Nil (never mentioned) means "rows with
 // no value here"; a non-nil but empty set means "nothing", which is what
 // sqlb.OneOf over zero values already compiles to.
-func dimension(column string, values []string) sqlb.Pred {
+func dimension(column string, values []uuid.UUID) sqlb.Pred {
 	if values == nil {
 		return sqlb.F(column).IsNull()
 	}

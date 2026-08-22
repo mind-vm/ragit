@@ -24,7 +24,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{objects: make(map[string][]byte)}
 }
 
-func (s *MemoryStore) Put(_ context.Context, tenantID string, filename string, data []byte, _ string) (string, error) {
+func (s *MemoryStore) Put(_ context.Context, tenantID uuid.UUID, filename string, data []byte, _ string) (string, error) {
 	uri := fmt.Sprintf("memory://%s/%s/%s", tenantID, uuid.NewString(), filename)
 	s.mu.Lock()
 	defer s.mu.Unlock()

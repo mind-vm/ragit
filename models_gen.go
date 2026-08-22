@@ -6,17 +6,18 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jryannel/sqlb"
 )
 
 // Chunk one retrieval-sized piece of a document, with its embedding.
 type Chunk struct {
-	ID                   string          `db:"id" json:"id" sqlb:"type:uuid,pk,default,filter,readonly"`
-	DocumentID           string          `db:"document_id" json:"document_id" sqlb:"type:uuid"`
-	TenantID             string          `db:"tenant_id" json:"tenant_id" sqlb:"type:uuid,filter,readonly,scope"`
-	ScopeAID             *string         `db:"scope_a_id" json:"scope_a_id" sqlb:"type:uuid,filter"`
-	ScopeBID             *string         `db:"scope_b_id" json:"scope_b_id" sqlb:"type:uuid,filter"`
-	SessionID            *string         `db:"session_id" json:"session_id" sqlb:"type:uuid,filter"`
+	ID                   uuid.UUID       `db:"id" json:"id" sqlb:"type:uuid,pk,default,filter,readonly"`
+	DocumentID           uuid.UUID       `db:"document_id" json:"document_id" sqlb:"type:uuid"`
+	TenantID             uuid.UUID       `db:"tenant_id" json:"tenant_id" sqlb:"type:uuid,filter,readonly,scope"`
+	ScopeAID             *uuid.UUID      `db:"scope_a_id" json:"scope_a_id" sqlb:"type:uuid,filter"`
+	ScopeBID             *uuid.UUID      `db:"scope_b_id" json:"scope_b_id" sqlb:"type:uuid,filter"`
+	SessionID            *uuid.UUID      `db:"session_id" json:"session_id" sqlb:"type:uuid,filter"`
 	ChunkIndex           int32           `db:"chunk_index" json:"chunk_index" sqlb:"type:int,filter,sort"`
 	HeadingPath          []string        `db:"heading_path" json:"heading_path" sqlb:"type:text"`
 	Content              string          `db:"content" json:"content" sqlb:"type:text"`
@@ -32,11 +33,11 @@ func (Chunk) TableName() string { return "ragit_chunks" }
 
 // Document a source document ingested by ragit.
 type Document struct {
-	ID             string          `db:"id" json:"id" sqlb:"type:uuid,pk,default,filter,readonly"`
-	TenantID       string          `db:"tenant_id" json:"tenant_id" sqlb:"type:uuid,filter,readonly,scope"`
-	ScopeAID       *string         `db:"scope_a_id" json:"scope_a_id" sqlb:"type:uuid,filter"`
-	ScopeBID       *string         `db:"scope_b_id" json:"scope_b_id" sqlb:"type:uuid,filter"`
-	SessionID      *string         `db:"session_id" json:"session_id" sqlb:"type:uuid,filter"`
+	ID             uuid.UUID       `db:"id" json:"id" sqlb:"type:uuid,pk,default,filter,readonly"`
+	TenantID       uuid.UUID       `db:"tenant_id" json:"tenant_id" sqlb:"type:uuid,filter,readonly,scope"`
+	ScopeAID       *uuid.UUID      `db:"scope_a_id" json:"scope_a_id" sqlb:"type:uuid,filter"`
+	ScopeBID       *uuid.UUID      `db:"scope_b_id" json:"scope_b_id" sqlb:"type:uuid,filter"`
+	SessionID      *uuid.UUID      `db:"session_id" json:"session_id" sqlb:"type:uuid,filter"`
 	SourceURI      *string         `db:"source_uri" json:"source_uri" sqlb:"type:text"`
 	Filename       string          `db:"filename" json:"filename" sqlb:"type:text,filter,sort"`
 	MimeType       string          `db:"mime_type" json:"mime_type" sqlb:"type:text,filter"`

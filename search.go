@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jryannel/sqlb"
 
@@ -17,8 +18,8 @@ const DefaultTopK = 10
 
 // SearchResult is one retrieved chunk, carrying enough context to cite it.
 type SearchResult struct {
-	ChunkID    string
-	DocumentID string
+	ChunkID    uuid.UUID
+	DocumentID uuid.UUID
 	Filename   string
 	ChunkIndex int32
 	// HeadingPath is the chunk's trail of Markdown headings, e.g.
@@ -37,8 +38,8 @@ type SearchResult struct {
 // other a ts_rank: the alias names the slot, and SearchResult.Score documents
 // that what fills it differs by query.
 type citation struct {
-	ChunkID     string          `db:"id"`
-	DocumentID  string          `db:"document_id"`
+	ChunkID     uuid.UUID       `db:"id"`
+	DocumentID  uuid.UUID       `db:"document_id"`
 	ChunkIndex  int32           `db:"chunk_index"`
 	HeadingPath []string        `db:"heading_path"`
 	Content     string          `db:"content"`

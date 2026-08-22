@@ -39,8 +39,8 @@ func TestEventSink_FiresOnSuccess(t *testing.T) {
 	sink := &recordingSink{}
 	h.processor.WithEventSink(sink)
 
-	tenantID := uuid.NewString()
-	scopeA := uuid.NewString()
+	tenantID := uuid.New()
+	scopeA := uuid.New()
 	doc := h.ingest(t, ragit.DocumentInput{
 		TenantID: tenantID, ScopeA: &scopeA,
 		Filename: "db.md", MimeType: "text/markdown",
@@ -78,7 +78,7 @@ func TestEventSink_FiresOnTerminalFailure(t *testing.T) {
 		chunk.New(chunk.DefaultConfig()), embedder, store.NewMemoryStore()).
 		WithEventSink(sink)
 
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	_, err = processor.Ingest(context.Background(), ragit.DocumentInput{
 		TenantID: tenantID, Filename: "broken.pdf", MimeType: "application/pdf",
 		Data: []byte("not a pdf"),
@@ -112,7 +112,7 @@ func TestEventSink_FiresOnSkippedTooLarge(t *testing.T) {
 		WithMaxChunksPerDocument(3).
 		WithEventSink(sink)
 
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	_, err = processor.Ingest(context.Background(), ragit.DocumentInput{
 		TenantID: tenantID, Filename: "big.md", MimeType: "text/markdown",
 		Data: []byte(longFixture),
@@ -133,7 +133,7 @@ func TestEventSink_PanicDoesNotFailTheIndexing(t *testing.T) {
 		panic("subscriber blew up")
 	}))
 
-	tenantID := uuid.NewString()
+	tenantID := uuid.New()
 	doc, err := h.processor.Ingest(context.Background(), ragit.DocumentInput{
 		TenantID: tenantID, Filename: "db.md", MimeType: "text/markdown",
 		Data: []byte("Postgres stores relational data durably."),

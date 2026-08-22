@@ -3,15 +3,17 @@ package ragit
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Event reports that a document reached a terminal state.
 type Event struct {
-	DocumentID string
-	TenantID   string
-	ScopeA     *string
-	ScopeB     *string
-	SessionID  *string
+	DocumentID uuid.UUID
+	TenantID   uuid.UUID
+	ScopeA     *uuid.UUID
+	ScopeB     *uuid.UUID
+	SessionID  *uuid.UUID
 	Filename   string
 	// Status is one of StatusReady, StatusError or StatusSkippedTooLarge.
 	Status string

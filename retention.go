@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jryannel/sqlb"
 )
 
@@ -51,7 +52,7 @@ func (p *Processor) DeleteExpired(ctx context.Context) (*RetentionResult, error)
 			return nil
 		}
 
-		ids := make([]string, len(expired))
+		ids := make([]uuid.UUID, len(expired))
 		for i, d := range expired {
 			ids[i] = d.ID
 		}

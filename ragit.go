@@ -33,6 +33,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jryannel/sqlb"
 
@@ -60,17 +61,17 @@ var ErrNotFound = errors.New("ragit: document not found")
 // DocumentInput describes a document to ingest.
 type DocumentInput struct {
 	// TenantID is required; it is the security boundary.
-	TenantID string
+	TenantID uuid.UUID
 	// ScopeA and ScopeB file the document under ragit's two generic scope
 	// dimensions. ragit does not know what they mean — a host application maps
 	// its own domain onto them, and searches confine with the matching
 	// [Scope].
-	ScopeA *string
-	ScopeB *string
+	ScopeA *uuid.UUID
+	ScopeB *uuid.UUID
 	// SessionID marks the document as an ephemeral attachment belonging to one
 	// conversation or agent session. Such documents are invisible to ordinary
 	// library search unless a caller names that session.
-	SessionID *string
+	SessionID *uuid.UUID
 	// ExpiresAt sets a retention clock on the document and its chunks. Nil
 	// keeps it until explicitly deleted.
 	ExpiresAt *time.Time
@@ -81,7 +82,7 @@ type DocumentInput struct {
 
 func (in DocumentInput) validate() error {
 	switch {
-	case in.TenantID == "":
+	case in.TenantID == uuid.Nil:
 		return fmt.Errorf("%w: DocumentInput.TenantID is required", ErrUnscoped)
 	case in.Filename == "":
 		return errors.New("ragit: DocumentInput.Filename is required")
@@ -137,14 +138,14 @@ const embedBatchSize = 10
 // CreateDocument stores the bytes and inserts a pending row. Fast and
 // synchronous — meant to be called from an upload handler, before a
 // ProcessDocument job is enqueued.
-func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (string, error) {
+func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (uuid.UUID, error) {
 	if err := in.validate(); err != nil {
-		return "", err
+		return uuid.Nil, err
 	}
 
 	uri, err := p.store.Put(ctx, in.TenantID, in.Filename, in.Data, in.MimeType)
 	if err != nil {
-		return "", fmt.Errorf("ragit: store document: %w", err)
+		return uuid.Nil, fmt.Errorf("ragit: store document: %w", err)
 	}
 
 	row := &Document{
@@ -160,7 +161,7 @@ func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (strin
 		ExpiresAt: in.ExpiresAt,
 	}
 
-	var id string
+	var id uuid.UUID
 	err = WithTenant(ctx, p.pool, in.TenantID, func(db sqlb.Executor) error {
 		created, err := sqlb.InsertRows(row).
 			Omit("id", "created_at", "updated_at", "status", "metadata").
@@ -172,7 +173,7 @@ func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (strin
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return uuid.Nil, err
 	}
 	return id, nil
 }
@@ -191,7 +192,7 @@ func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (strin
 // embedding provider's HTTP calls would hold a connection open for the whole
 // run and — worse — make the per-batch checkpointing meaningless, since
 // nothing would be durable until the final commit.
-func (p *Processor) ProcessDocument(ctx context.Context, documentID, tenantID string) error {
+func (p *Processor) ProcessDocument(ctx context.Context, documentID, tenantID uuid.UUID) error {
 	var doc Document
 	err := WithTenant(ctx, p.pool, tenantID, func(db sqlb.Executor) error {
 		found, err := sqlb.Query[Document]().
@@ -326,7 +327,7 @@ func (p *Processor) Ingest(ctx context.Context, in DocumentInput) (*Document, er
 
 // sessionOf widens a scope to a session when the document has one, so Ingest
 // can read back an ephemeral attachment it just created.
-func (s Scope) sessionOf(sessionID *string) Scope {
+func (s Scope) sessionOf(sessionID *uuid.UUID) Scope {
 	if sessionID == nil {
 		return s
 	}
@@ -342,7 +343,7 @@ func (s Scope) sessionOf(sessionID *string) Scope {
 // Reprocessing does not fix them either — the resume check sees identical
 // content, skips the rewrite, and leaves the chunks answering searches for
 // their old scope.
-func (p *Processor) MoveDocumentScope(ctx context.Context, tenantID, documentID string, scopeA, scopeB, sessionID *string) error {
+func (p *Processor) MoveDocumentScope(ctx context.Context, tenantID, documentID uuid.UUID, scopeA, scopeB, sessionID *uuid.UUID) error {
 	return WithTenant(ctx, p.pool, tenantID, func(db sqlb.Executor) error {
 		rows, err := sqlb.UpdateRows[Document]().
 			Set("scope_a_id", scopeA).
@@ -378,7 +379,7 @@ func (p *Processor) MoveDocumentScope(ctx context.Context, tenantID, documentID 
 // searches but whose bytes have vanished — the cheaper of the two
 // inconsistencies, and the one a storage lifecycle rule can mop up. The error
 // is still returned so the caller knows it happened.
-func (p *Processor) DeleteDocument(ctx context.Context, tenantID, documentID string) error {
+func (p *Processor) DeleteDocument(ctx context.Context, tenantID, documentID uuid.UUID) error {
 	var sourceURI *string
 	if err := WithTenant(ctx, p.pool, tenantID, func(db sqlb.Executor) error {
 		doc, err := sqlb.Query[Document]().

@@ -56,7 +56,7 @@ func NewMinIOStore(ctx context.Context, cfg MinIOConfig) (*MinIOStore, error) {
 
 // Put uploads data under a tenant-prefixed, collision-resistant key and
 // returns an s3:// URI identifying it.
-func (s *MinIOStore) Put(ctx context.Context, tenantID string, filename string, data []byte, mimeType string) (string, error) {
+func (s *MinIOStore) Put(ctx context.Context, tenantID uuid.UUID, filename string, data []byte, mimeType string) (string, error) {
 	key := fmt.Sprintf("%s/%s/%s", tenantID, uuid.NewString(), filename)
 	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)),
 		minio.PutObjectOptions{ContentType: mimeType})
