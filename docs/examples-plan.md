@@ -50,16 +50,65 @@ against. Re-check on upgrade.
   as an in-process library function in the language bindings only. This is the
   detail that makes example B awkward — see below.
 
-Confirmed from the running server's schema: the `Chunk` object carries an
-`embedding` field, "only populated when `EmbeddingConfig` is provided in
-chunking configuration" — so extract + chunk + embed really is one call, and
-example B's premise holds.
+### The verified `/extract` contract
 
-Still unverified, and the reason step 3 exists: `/extract`'s request body is
-declared as bare `multipart/form-data` with no schema, so **the exact JSON shape
-of the `config` field is not discoverable from the API description** and has to
-be probed. Likewise whether `heading_path` survives the `markdown` chunker for
-the formats we care about.
+`/extract`'s request body is declared as bare `multipart/form-data` with no
+schema, and there is no `ExtractionConfig` among the 90 component schemas — so
+the config shape is not discoverable from the API description at all. It was
+recovered by asking the CLI (`xberg extract --help`, then feeding it a bad key
+so the deserializer enumerated the valid ones) and then confirmed over HTTP.
+
+**This works, and it is what example B is built on:**
+
+```bash
+curl -X POST http://localhost:8234/extract \
+  -F "files=@handbook.md;type=text/markdown" \
+  -F 'config={"output_format":"markdown","chunking":{"max_chars":1000,"overlap":200,"chunker_type":"markdown","embedding":{}}}'
+```
+
+- The config field is `config`, alongside `files`. Top-level keys are
+  `output_format`, `chunking`, `ocr`, `images`, `pdf_options`, `layout`,
+  `pages`, `keywords`, `language_detection`, `token_reduction`, `use_cache`,
+  `extraction_timeout_secs` and ~25 more. **`content_format` is not one** —
+  `output_format` is, which is what ragit's `XbergExtractor` already sends.
+- `chunking` takes **`max_chars`**, `overlap`, `chunker_type`
+  (`text`|`markdown`|`yaml`|`semantic`), and `embedding`. Note `max_chars`, not
+  the `max_characters`/`chunker_type` pairing the published docs list — the docs
+  are wrong on this, and a request using them is accepted with the field
+  ignored rather than rejected.
+- **`"embedding": {}` alone turns embeddings on**, with the default local ONNX
+  preset. No key, no model name, no provider needed. It downloads
+  `xberg-io/embedding-models` from HuggingFace on first use (slow, cached in the
+  container volume) and produces **768-dimension** vectors — BGE-base, the
+  `balanced` preset, exactly the width this plan assumed.
+- The response envelope is `{results: [...], summary: {...}}`, and each result
+  carries `chunks: [{content, chunk_type, embedding, metadata}]` with
+  `metadata` = `byte_start`, `byte_end`, `chunk_index`, `total_chunks`,
+  `heading_context`. No `page_spans` or `token_count` unless page tracking and
+  token sizing are turned on.
+- `heading_context` is `{"headings":[{"level":1,"text":"…"},…]}` — a level+text
+  trail, strictly richer than ragit's `HeadingPath []string`, which it maps onto
+  by taking each `.text`.
+- `chunk_type` classifies each chunk (`heading`, `unknown`, …). ragit has no
+  column for it; it would go in the chunk's `metadata` JSONB.
+
+### The two chunkers disagree, and that is the comparison
+
+Same document (`fixtures/handbook.md`), same settings — 1000 characters,
+200 overlap:
+
+| chunker | chunks |
+|---|---|
+| ragit `chunk.Chunker` | 13 |
+| xberg `chunker_type: markdown` | 5 |
+
+xberg packs sibling sections together up to the budget; ragit splits per heading
+section. Neither is wrong, but they produce meaningfully different retrieval
+granularity from identical input, and B will make that visible in the search
+results rather than leaving it as a number. (At small `max_chars` xberg also
+emits bare heading-only chunks — three of the first five at `max_chars: 120` —
+each costing an embedding. Not a problem at realistic sizes, but a reason not to
+tune that knob down thoughtlessly.)
 
 ## The seam problem
 
@@ -199,9 +248,11 @@ library's real dependency surface.
 2. ~~**A first**, and note every place the README's wiring instructions turn out
    to be incomplete. A is a documentation test as much as a demo.~~ **Done** —
    `examples/extract-only`. See "What A found" below.
-3. Confirm the `/extract` chunk+embed config shape against the running
+3. ~~Confirm the `/extract` chunk+embed config shape against the running
    container. If chunking-with-embeddings does not work over REST as documented,
-   B changes shape and we should re-plan rather than improvise.
+   B changes shape and we should re-plan rather than improvise.~~ **Done, and B
+   is a go** — extract + chunk + embed in one HTTP call, 768-dimension vectors,
+   full heading trail. No re-plan needed. The verified contract is above.
 4. **B via the sqlb bypass.** Write down every friction point as it appears —
    that log is the actual deliverable.
 5. Decide whether A should also carry the River path
