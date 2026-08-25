@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jryannel/sqlb"
+	"github.com/mind-vm/sqlb"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mind-vm/ragit"

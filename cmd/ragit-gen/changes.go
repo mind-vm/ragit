@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/jryannel/sqlb/migrate"
+	"github.com/mind-vm/sqlb/migrate"
 
 	"github.com/mind-vm/ragit/ragitschema"
 )

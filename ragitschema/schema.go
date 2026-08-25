@@ -15,7 +15,7 @@
 // deployment that wants a different width renders its own migration set.
 package ragitschema
 
-import "github.com/jryannel/sqlb/schema"
+import "github.com/mind-vm/sqlb/schema"
 
 // DefaultEmbeddingDimension is the width ragit's shipped migrations declare.
 // It matches embed.DefaultDimension.
