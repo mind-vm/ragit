@@ -9,7 +9,7 @@ import (
 	"github.com/jryannel/sqlb"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit"
+	"github.com/mind-vm/ragit"
 )
 
 func TestDeleteDocument_PurgesStoredBytes(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit/embed"
+	"github.com/mind-vm/ragit/embed"
 )
 
 func TestClient_Embed_ExactDimension_PassesThrough(t *testing.T) {

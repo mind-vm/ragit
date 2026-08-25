@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit/extract"
+	"github.com/mind-vm/ragit/extract"
 )
 
 type stubExtractor struct {

@@ -6,9 +6,9 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/embed"
-	"github.com/jryannel/ragit/extract"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/embed"
+	"github.com/mind-vm/ragit/extract"
 )
 
 // ProcessDocumentWorker runs Processor.ProcessDocument as a River job.

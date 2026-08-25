@@ -28,7 +28,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/jryannel/ragit/internal/migrate"
+	"github.com/mind-vm/ragit/internal/migrate"
 )
 
 // appRole is the unprivileged role tests connect as. It owns nothing and has

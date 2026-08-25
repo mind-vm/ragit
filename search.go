@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jryannel/sqlb"
 
-	"github.com/jryannel/ragit/embed"
+	"github.com/mind-vm/ragit/embed"
 )
 
 // DefaultTopK is used when SearchOptions.TopK is left at zero.

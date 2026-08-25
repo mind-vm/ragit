@@ -22,7 +22,7 @@ import (
 	"github.com/jryannel/sqlb/migrate"
 	"github.com/jryannel/sqlb/schema"
 
-	"github.com/jryannel/ragit/ragitschema"
+	"github.com/mind-vm/ragit/ragitschema"
 )
 
 func main() {

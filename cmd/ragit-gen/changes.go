@@ -5,7 +5,7 @@ import (
 
 	"github.com/jryannel/sqlb/migrate"
 
-	"github.com/jryannel/ragit/ragitschema"
+	"github.com/mind-vm/ragit/ragitschema"
 )
 
 // searchVectorChanges adds the stored tsvector column backing full-text search.

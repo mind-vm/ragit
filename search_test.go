@@ -13,11 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/chunk"
-	"github.com/jryannel/ragit/embed"
-	"github.com/jryannel/ragit/extract"
-	"github.com/jryannel/ragit/store"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/chunk"
+	"github.com/mind-vm/ragit/embed"
+	"github.com/mind-vm/ragit/extract"
+	"github.com/mind-vm/ragit/store"
 )
 
 const searchEmbedDim = 1536

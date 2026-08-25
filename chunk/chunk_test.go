@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit/chunk"
+	"github.com/mind-vm/ragit/chunk"
 )
 
 func TestSplitMarkdown_HeadingPathTracksNesting(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit/extract"
+	"github.com/mind-vm/ragit/extract"
 )
 
 func TestXbergExtractor_Success(t *testing.T) {

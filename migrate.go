@@ -5,7 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jryannel/ragit/internal/migrate"
+	"github.com/mind-vm/ragit/internal/migrate"
 )
 
 // Migrate brings ragit's own tables up to the schema this build expects.

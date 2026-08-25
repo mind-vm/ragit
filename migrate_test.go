@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/internal/testutil"
-	"github.com/jryannel/ragit/ragitschema"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/internal/testutil"
+	"github.com/mind-vm/ragit/ragitschema"
 )
 
 // Migrations run against a scratch database rather than the shared one, so

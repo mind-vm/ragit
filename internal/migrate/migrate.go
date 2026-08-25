@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/jryannel/ragit/migrations"
+	"github.com/mind-vm/ragit/migrations"
 )
 
 // TableName is ragit's own schema-version table. It is deliberately not

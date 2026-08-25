@@ -37,10 +37,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jryannel/sqlb"
 
-	"github.com/jryannel/ragit/chunk"
-	"github.com/jryannel/ragit/embed"
-	"github.com/jryannel/ragit/extract"
-	"github.com/jryannel/ragit/store"
+	"github.com/mind-vm/ragit/chunk"
+	"github.com/mind-vm/ragit/embed"
+	"github.com/mind-vm/ragit/extract"
+	"github.com/mind-vm/ragit/store"
 )
 
 // Document statuses.

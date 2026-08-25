@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit"
+	"github.com/mind-vm/ragit"
 )
 
 func TestAttributes_NarrowVectorAndFullTextSearch(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit/extract"
+	"github.com/mind-vm/ragit/extract"
 )
 
 // These tests spawn the test binary itself as an extraction child — TestMain

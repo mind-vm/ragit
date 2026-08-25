@@ -6,7 +6,7 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/jryannel/ragit"
+	"github.com/mind-vm/ragit"
 )
 
 // DeleteExpiredArgs carries no state: the sweep finds its own work. It is

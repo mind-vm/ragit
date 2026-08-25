@@ -5,7 +5,7 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/jryannel/ragit"
+	"github.com/mind-vm/ragit"
 )
 
 // DeleteDocumentWorker runs Processor.DeleteDocument as a River job.

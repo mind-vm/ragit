@@ -8,8 +8,8 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit/embed"
-	"github.com/jryannel/ragit/extract"
+	"github.com/mind-vm/ragit/embed"
+	"github.com/mind-vm/ragit/extract"
 )
 
 func TestClassify_Success_ReturnsNil(t *testing.T) {
