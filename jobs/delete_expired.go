@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/mind-vm/ragit"
 )
@@ -26,11 +27,33 @@ func (DeleteExpiredArgs) Kind() string { return "ragit_delete_expired" }
 func (DeleteExpiredArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{
 		Queue: "ragit_process_document",
-		// One sweep in flight at a time. Two concurrent passes would race to
-		// delete the same rows, and the loser would do a lot of work to
-		// delete nothing. The args are an empty struct, so ByArgs makes every
-		// instance identical; ByState is left unset to take River's default.
-		UniqueOpts:  river.UniqueOpts{ByArgs: true},
+		// One sweep *in flight* at a time. Two concurrent passes would race to
+		// delete the same rows, and the loser would do a lot of work to delete
+		// nothing. The args are an empty struct, so ByArgs makes every instance
+		// identical.
+		//
+		// ByState must therefore be spelled out, and that is the whole point of
+		// this comment. River's default set includes JobStateCompleted — a
+		// completed unique job goes on blocking duplicates until the job
+		// cleaner removes it, a day later by default. Combined with identical
+		// args that does not mean "one in flight", it means *one sweep per
+		// day*: a deployment scheduling this every 15 minutes gets its first
+		// sweep and then silence, with no error anywhere, because a skipped
+		// unique insert is a success that returns the existing job.
+		//
+		// Available, Pending, Running and Scheduled are required by River
+		// whenever ByState is set at all. Retryable is kept because a sweep
+		// waiting to retry is still in flight.
+		UniqueOpts: river.UniqueOpts{
+			ByArgs: true,
+			ByState: []rivertype.JobState{
+				rivertype.JobStateAvailable,
+				rivertype.JobStatePending,
+				rivertype.JobStateRunning,
+				rivertype.JobStateRetryable,
+				rivertype.JobStateScheduled,
+			},
+		},
 		MaxAttempts: 3,
 	}
 }

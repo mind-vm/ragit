@@ -2,6 +2,7 @@ package demo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -36,7 +37,25 @@ func EnsureDocument(
 		Where(sqlb.RawPred("tenant_id = ? AND filename = ?", tenantID, doc.Filename)).
 		One(ctx, pool)
 	if err == nil && existing.DocumentID != nil {
-		return *existing.DocumentID, false, nil
+		// The application's index can go stale relative to ragit's. A document
+		// deleted through ragit — by the retention sweep, or by a
+		// DeleteDocument job — leaves this row behind pointing at nothing,
+		// because ragit has no idea this table exists. Trusting the row blindly
+		// makes the fixture look "already indexed" while nothing is indexed.
+		//
+		// So the pointer is checked before it is used, and a dangling one is
+		// repaired. An application that cares would subscribe to ragit's
+		// EventSink instead of discovering this on the next upload.
+		if _, err := processor.GetDocument(ctx, ragit.Tenant(tenantID), *existing.DocumentID); err == nil {
+			return *existing.DocumentID, false, nil
+		} else if !errors.Is(err, ragit.ErrNotFound) {
+			return uuid.Nil, false, fmt.Errorf("check existing document: %w", err)
+		}
+		if _, err := sqlb.DeleteRows[bootstrap.Upload]().
+			Where(sqlb.RawPred("id = ?", existing.ID)).
+			Exec(ctx, pool); err != nil {
+			return uuid.Nil, false, fmt.Errorf("clear stale upload row: %w", err)
+		}
 	}
 
 	attributes := make(ragit.Attributes, len(doc.Attributes))

@@ -249,8 +249,25 @@ $$;`, quote(cfg.AppRole), cfg.AppRole, quote(cfg.AppPassword))
 
 	// The role is cluster-wide, so CREATE ROLE is a no-op the second time; the
 	// grants are per-database and have to be repeated in each one.
+	if _, err := pool.Exec(ctx, create); err != nil {
+		return fmt.Errorf("create app role: %w", err)
+	}
+	return GrantAppRole(ctx, pool, cfg)
+}
+
+// GrantAppRole grants the application role what it needs on everything that
+// currently exists.
+//
+// Exported because "currently exists" is load-bearing and easy to get wrong.
+// GRANT ... ON ALL TABLES is not a standing rule — it expands to the tables
+// present at the moment it runs. Any migration that creates a table afterwards
+// leaves the role locked out of it, with a permission error at the first query
+// rather than at deploy time. The async example hits this exactly: River's
+// migrations create river_* tables after Setup has already granted, so it has
+// to call this again. A real deployment either re-grants after every migration
+// or sets ALTER DEFAULT PRIVILEGES up front.
+func GrantAppRole(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 	stmts := []string{
-		create,
 		fmt.Sprintf("GRANT USAGE ON SCHEMA public TO %s", cfg.AppRole),
 		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s", cfg.AppRole),
 		fmt.Sprintf("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s", cfg.AppRole),

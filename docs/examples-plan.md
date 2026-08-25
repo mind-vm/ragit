@@ -256,10 +256,11 @@ library's real dependency surface.
 4. ~~**B via the sqlb bypass.** Write down every friction point as it appears —
    that log is the actual deliverable.~~ **Done** — `examples/xberg-owned`. See
    "What B found" below.
-5. Decide whether A should also carry the River path
+5. ~~Decide whether A should also carry the River path
    (`CreateDocument` + enqueue + worker) or stay synchronous on `Ingest`.
    Recommend adding it: [`jobs/`](../jobs) has never been exercised from
-   outside this module.
+   outside this module.~~ **Done, as a third program** — `examples/async`. See
+   "What the queue found" below.
 
 ## What A found
 
@@ -463,6 +464,89 @@ not comparable across embedding spaces; do not read anything into 0.6691 vs
 6. **Resume guard lower down?** *Yes, and it is the single most valuable thing
    to move.* It is the one property whose absence costs money rather than
    tidiness.
+
+## What the queue found
+
+`examples/async` runs the extract-only pipeline entirely through River: nothing
+is processed inline, all three workers are registered, and the retention sweep
+is scheduled periodically. It is a **third program** rather than a flag on
+`extract-only` — the point of A and B is that they read side by side and differ
+only in pipeline shape, and a River client, a subscription and a shutdown
+sequence in one of them would wreck that comparison.
+
+Everything in [`jobs/`](../jobs) works. Documents reach `ready` through
+`ragit_process_document` jobs, `DeleteDocumentWorker` removes a document
+through the queue, and the sweep deletes an expired document across tenants
+under `WithMaintenance` — the only path in ragit that reads cross-tenant, and
+the only user of that escape hatch, so it had never been exercised end to end.
+
+### It also found a bug, and this is why step 5 was worth doing
+
+**`jobs.DeleteExpiredArgs` could only ever run one retention sweep per day.**
+Fixed in this branch.
+
+`InsertOpts` set `UniqueOpts{ByArgs: true}` and left `ByState` unset. The args
+are an empty struct, so `ByArgs` makes every instance identical — and River's
+default `ByState` **includes `JobStateCompleted`**, documented in River's own
+source: "if a unique job has `completed`, you still can't insert a duplicate, at
+least not until the job cleaner maintenance process eventually removes the
+completed job". River's default retention for completed jobs is 24 hours.
+
+So the intent in the code comment — "one sweep in flight at a time" — was not
+what the code did. What it did was: the first sweep runs, and every subsequent
+insert is silently skipped for a day. Nothing errors, because a skipped unique
+insert is a *success* that returns the existing job. A deployment following the
+package's own suggested wiring (`river.PeriodicInterval(15*time.Minute)`) would
+have got one sweep per day and no signal that anything was wrong. Retention
+would simply have lagged, unboundedly, on a library whose whole point is that
+its ephemeral-attachment scope expires.
+
+It was invisible from inside the module because nothing there ever inserted the
+job twice. `examples/async` found it on its **second run**: the first run
+passed, the second timed out waiting for a document to be swept.
+
+The fix names the non-terminal states explicitly (`available`, `pending`,
+`running`, `retryable`, `scheduled` — the first four are required by River
+whenever `ByState` is set), with a regression test in `jobs/args_test.go` that
+asserts `completed` is absent.
+
+**Upgrade note for any existing deployment:** River evaluates uniqueness against
+the `unique_states` stored on the *existing* row, so a completed sweep inserted
+before this fix goes on blocking new ones until the job cleaner removes it. That
+was observed directly — the fix appeared to do nothing until the stale row was
+deleted. Clearing it is a one-liner:
+
+```sql
+DELETE FROM river_job WHERE kind = 'ragit_delete_expired' AND state = 'completed';
+```
+
+### Two smaller frictions
+
+**Grants do not cover tables that do not exist yet.** `GRANT … ON ALL TABLES`
+expands at the moment it runs. `bootstrap.Setup` grants after ragit's
+migrations, River's migrations then create `river_*`, and the application role
+is locked out of them — a bare permission error on the first job insert, at
+runtime, far from the cause. `examples/async` re-grants after migrating River,
+and a real deployment needs either that discipline or `ALTER DEFAULT
+PRIVILEGES` up front. Worth a line in ragit's own deployment notes, since the
+same trap applies to ragit's tables if a host app grants before migrating.
+
+**The queue name is load-bearing and silent.** ragit's job args name the queue
+`ragit_process_document`. A host application whose River client does not
+configure that queue registers the workers successfully, inserts jobs
+successfully, and then nothing ever runs them. Nothing reports a problem.
+
+### A finding about the host application, not the library
+
+`demo.EnsureDocument` deduplicates uploads against the application's own table.
+When a document is deleted *through ragit* — by the sweep, or a
+`DeleteDocumentWorker` job — that row is left pointing at nothing, because ragit
+has no idea the table exists. The fixture then looks "already indexed" while
+nothing is indexed. The helper now verifies the pointer and repairs it, but the
+real answer is the `EventSink`: an application that wants to stay consistent
+with ragit's catalog has to subscribe, not poll. That is an argument for the
+sink being on *every* terminal state, which it already is — and against the
+bypass in B, where it never fires at all.
 
 ## Shape questions these are meant to answer
 

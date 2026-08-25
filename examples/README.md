@@ -25,6 +25,7 @@ make up                # postgres+pgvector, xberg, minio
 make verify            # assert the environment is what the examples assume
 go run ./extract-only  # needs EDENAI_API_KEY, see below
 go run ./xberg-owned   # no API key — the embedding model runs in the container
+go run ./async         # the extract-only pipeline, driven entirely by River
 ```
 
 `extract-only` is safe to re-run: the corpus belongs to a fixed tenant, uploads
@@ -68,6 +69,9 @@ built on. Override with `POSTGRES_PORT`, `XBERG_PORT`, `MINIO_PORT`.
 ```
 compose.yaml            postgres+pgvector, xberg, minio
 verify/                 the environment gate described above
+async/                  the extract-only pipeline through River: all three
+                        workers, plus the retention sweep — the only path in
+                        ragit that reads across tenants
 extract-only/           xberg extracts; ragit chunks, embeds, stores, searches
 xberg-owned/            xberg extracts+chunks+embeds; ragit stores and searches
                         — written against the sqlb bypass, since ragit has no
