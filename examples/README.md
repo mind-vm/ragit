@@ -7,8 +7,13 @@ the shape questions these are measured against.
 
 | | extraction | chunking | embedding | storage + search |
 |---|---|---|---|---|
-| [`extract-only/`](extract-only) | xberg | ragit | EdenAI | ragit |
-| `xberg-owned/` *(not written yet)* | xberg | xberg | xberg | ragit |
+| [`extract-only/`](extract-only) | xberg | ragit | EdenAI (1536-d) | ragit |
+| [`xberg-owned/`](xberg-owned) | xberg | xberg | xberg, local ONNX (768-d) | ragit |
+
+They use **different databases**. A vector column's width is part of its type,
+so a 768-dimension corpus and a 1536-dimension one cannot share tables:
+`extract-only` runs in `ragit_examples`, `xberg-owned` creates and uses
+`ragit_examples_768` with its own generated migration set.
 
 Both run against the same infrastructure, so the only thing that differs
 between them is pipeline shape.
@@ -19,6 +24,7 @@ between them is pipeline shape.
 make up                # postgres+pgvector, xberg, minio
 make verify            # assert the environment is what the examples assume
 go run ./extract-only  # needs EDENAI_API_KEY, see below
+go run ./xberg-owned   # no API key — the embedding model runs in the container
 ```
 
 `extract-only` is safe to re-run: the corpus belongs to a fixed tenant, uploads
@@ -63,6 +69,10 @@ built on. Override with `POSTGRES_PORT`, `XBERG_PORT`, `MINIO_PORT`.
 compose.yaml            postgres+pgvector, xberg, minio
 verify/                 the environment gate described above
 extract-only/           xberg extracts; ragit chunks, embeds, stores, searches
+xberg-owned/            xberg extracts+chunks+embeds; ragit stores and searches
+                        — written against the sqlb bypass, since ragit has no
+                        seam for pre-chunked, pre-embedded input. Read
+                        ingest.go: every FRICTION comment is a finding.
 fixtures/               three documents: markdown, csv, pdf
 internal/bootstrap/     migrations, the unprivileged role, the host app's schema
 internal/demo/          what both examples share: counters, dedupe, reporting

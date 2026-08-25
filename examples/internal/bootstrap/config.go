@@ -93,7 +93,8 @@ func (c Config) RequireEdenAI() error {
 	return nil
 }
 
-// ExpectedDatabase is the database these examples are allowed to modify.
+// ExpectedDatabase is the database these examples are allowed to modify. The
+// xberg-owned example uses a sibling with a suffix, so the check is a prefix.
 const ExpectedDatabase = "ragit_examples"
 
 // AllowAnyDatabaseEnv opts out of that check.
@@ -116,9 +117,9 @@ func (c Config) checkDatabaseName() error {
 		return fmt.Errorf("parse DATABASE_URL: %w", err)
 	}
 	name := strings.TrimPrefix(u.Path, "/")
-	if name != ExpectedDatabase {
+	if !strings.HasPrefix(name, ExpectedDatabase) {
 		return fmt.Errorf(
-			"DATABASE_URL points at database %q, not %q.\n"+
+			"DATABASE_URL points at database %q, which is not %q or a suffixed sibling.\n"+
 				"  These examples create roles and tables. If that is genuinely what you want,\n"+
 				"  set %s=1. If it is not, you probably sourced a project env file — export\n"+
 				"  EDENAI_API_KEY on its own instead of sourcing the whole thing.",
@@ -131,6 +132,28 @@ func (c Config) checkDatabaseName() error {
 // Same host, same database — only the role differs, which is the whole point.
 func (c Config) AppDSN() (string, error) {
 	return rewriteUser(c.AdminDSN, c.AppRole, c.AppPassword)
+}
+
+// DatabaseName is the database AdminDSN points at.
+func (c Config) DatabaseName() string {
+	u, err := url.Parse(c.AdminDSN)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(u.Path, "/")
+}
+
+// WithDatabase returns a copy pointed at a different database on the same
+// server. The xberg-owned example needs one: its vector column is 768 wide and
+// the extract-only example's is 1536, and a column's width is part of its type.
+func (c Config) WithDatabase(name string) (Config, error) {
+	u, err := url.Parse(c.AdminDSN)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
+	u.Path = "/" + name
+	c.AdminDSN = u.String()
+	return c, nil
 }
 
 func env(key, fallback string) string {

@@ -50,15 +50,40 @@ func (e *Env) Close() {
 	}
 }
 
-// Setup migrates, creates the application role, and returns pools for both.
+// Options vary what Setup brings up.
+type Options struct {
+	// MigrateRagit applies ragit's schema. Nil means ragit.Migrate, which
+	// carries the library's embedded 1536-dimension migrations. The
+	// xberg-owned example passes its own because its vectors are 768 wide and
+	// ragit.Migrate cannot be pointed at another set.
+	MigrateRagit func(context.Context, *pgxpool.Pool) error
+
+	// CreateDatabase creates the database in Config.AdminDSN if it does not
+	// exist yet, by connecting to ExpectedDatabase first.
+	CreateDatabase bool
+}
+
+// Setup brings up the default environment: ragit's own migrations, in the
+// database Config.AdminDSN names.
+func Setup(ctx context.Context, cfg Config) (*Env, error) {
+	return SetupWith(ctx, cfg, Options{})
+}
+
+// SetupWith migrates, creates the application role, and returns pools for both.
 //
 // The order is load-bearing. Migrations run as the superuser, so it owns the
 // tables; the application role is created afterwards as a plain grantee, which
 // is what makes ragit's FORCE ROW LEVEL SECURITY policies apply to it. Do this
 // the other way round — or skip it and connect as the superuser — and every
 // policy is silently inert while every test of them still passes.
-func Setup(ctx context.Context, cfg Config) (*Env, error) {
+func SetupWith(ctx context.Context, cfg Config, opts Options) (*Env, error) {
 	env := &Env{Cfg: cfg}
+
+	if opts.CreateDatabase {
+		if err := ensureDatabase(ctx, cfg); err != nil {
+			return nil, err
+		}
+	}
 
 	admin, err := pgxpool.New(ctx, cfg.AdminDSN)
 	if err != nil {
@@ -72,7 +97,11 @@ func Setup(ctx context.Context, cfg Config) (*Env, error) {
 	}
 
 	// ragit's migration line, tracked in ragit_migrations.
-	if err := ragit.Migrate(ctx, admin); err != nil {
+	migrateRagit := opts.MigrateRagit
+	if migrateRagit == nil {
+		migrateRagit = ragit.Migrate
+	}
+	if err := migrateRagit(ctx, admin); err != nil {
 		env.Close()
 		return nil, err
 	}
@@ -163,6 +192,42 @@ func MigrateDemoSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
+// ensureDatabase creates the target database if it is not there yet.
+//
+// CREATE DATABASE cannot run inside the database it creates, so this connects
+// to the default examples database to issue it.
+func ensureDatabase(ctx context.Context, cfg Config) error {
+	target := cfg.DatabaseName()
+	if target == "" || target == ExpectedDatabase {
+		return nil
+	}
+
+	base, err := cfg.WithDatabase(ExpectedDatabase)
+	if err != nil {
+		return err
+	}
+	pool, err := pgxpool.New(ctx, base.AdminDSN)
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", ExpectedDatabase, err)
+	}
+	defer pool.Close()
+
+	var exists bool
+	if err := pool.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", target).Scan(&exists); err != nil {
+		return fmt.Errorf("check for database %s: %w", target, err)
+	}
+	if exists {
+		return nil
+	}
+	// A database name cannot be parameterised. This one is built by the
+	// program from ExpectedDatabase, not taken from input.
+	if _, err := pool.Exec(ctx, "CREATE DATABASE "+target); err != nil {
+		return fmt.Errorf("create database %s: %w", target, err)
+	}
+	return nil
+}
+
 // ensureAppRole creates the unprivileged role and grants it what an
 // application needs, without letting it near SUPERUSER or BYPASSRLS.
 //
@@ -182,6 +247,8 @@ BEGIN
 END
 $$;`, quote(cfg.AppRole), cfg.AppRole, quote(cfg.AppPassword))
 
+	// The role is cluster-wide, so CREATE ROLE is a no-op the second time; the
+	// grants are per-database and have to be repeated in each one.
 	stmts := []string{
 		create,
 		fmt.Sprintf("GRANT USAGE ON SCHEMA public TO %s", cfg.AppRole),

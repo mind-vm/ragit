@@ -253,8 +253,9 @@ library's real dependency surface.
    B changes shape and we should re-plan rather than improvise.~~ **Done, and B
    is a go** — extract + chunk + embed in one HTTP call, 768-dimension vectors,
    full heading trail. No re-plan needed. The verified contract is above.
-4. **B via the sqlb bypass.** Write down every friction point as it appears —
-   that log is the actual deliverable.
+4. ~~**B via the sqlb bypass.** Write down every friction point as it appears —
+   that log is the actual deliverable.~~ **Done** — `examples/xberg-owned`. See
+   "What B found" below.
 5. Decide whether A should also carry the River path
    (`CreateDocument` + enqueue + worker) or stay synchronous on `Ingest`.
    Recommend adding it: [`jobs/`](../jobs) has never been exercised from
@@ -319,6 +320,149 @@ unchanged documents makes **zero** embedding calls), attribute narrowing
 (5 results → 2 under `team=warehouse`), tenant confinement (tenant B sees
 nothing), and the three-layer extractor chain with
 `RunIsolatedChildIfInvoked()` wired from `main()`.
+
+## What B found
+
+`examples/xberg-owned` runs: one `/extract` call returns each document
+extracted, chunked and embedded at 768 dimensions, and ragit stores and searches
+it. Vector search returns sensible hits, attribute narrowing works, and tenant B
+sees nothing. **The sqlb bypass is viable.** It is also expensive in a way that
+answers most of the open questions.
+
+### What the bypass costs
+
+Everything `ProcessDocument` does for free and the bypass has to redo. Three of
+the six fail *silently* when got wrong, which is the part that matters.
+
+**0. A Processor cannot be built without dependencies this path never uses.**
+`ragit.New` demands an `extract.Extractor` and a `*chunk.Chunker`. B needs a
+Processor for `CreateDocument`, `GetDocument`, `ListDocuments`, `VectorSearch`,
+`FullTextSearch` and `DeleteDocument` — the whole catalog and retrieval surface
+hangs off the same struct as ingestion — so it passes `nil, nil` and relies on
+knowing which methods stay away from them. That is a memorised fact about the
+implementation, not a contract.
+
+**1. Denormalization is by hand, and silent.** `tenant_id`, `scope_a_id`,
+`scope_b_id`, `session_id`, `attributes` and `expires_at` all have to be read
+back off the document and copied onto every chunk. Forget `attributes` and
+attribute filtering returns nothing; forget `scope_a_id` and the chunks answer
+searches for the wrong scope. Neither errors.
+
+**2. The embedding fingerprint is the caller's to get right, and silent.** It is
+what `VectorSearch` filters on, so a mismatch between what ingestion writes and
+what the query embedder reports produces zero results — indistinguishable from
+an empty corpus. B uses one object for both so they cannot drift, which is a
+discipline the API does not enforce.
+
+**3. The resume guard is gone.** Measured: a second pass costs **3 extract calls
+and 7 chunks re-embedded**, where `extract-only` shows **0**. The check lives
+inside `embedAndStore`, which this path never reaches. Local ONNX makes that CPU
+rather than money — but a hosted embedding model on this path would be re-billed
+on every retry, which is the exact incident §7 exists to prevent.
+
+**4. The terminal state is hand-written, and silent.** `Processor.finish` is
+unexported, so `status`, `text_content`, `metadata`, `chunk_count`,
+`embedding_model` and `processed_at` are all set again from outside with nothing
+checking the set is complete. Miss one and the catalog quietly disagrees with
+the chunks table.
+
+**5. The EventSink never fires.** A host application subscribing to indexing
+events simply stops hearing about documents that came in this way.
+
+### What survives the bypass, and why that is the interesting half
+
+Tenant confinement holds — tenant B gets nothing — because RLS is the
+*database's*, not the Processor's. Full-text search works without the bypass
+doing anything at all, because `search_vector` is `GENERATED ALWAYS AS`. Both
+are properties pushed down into the schema rather than enforced in Go, and both
+are exactly the properties that survived code that went around the library. That
+is an argument for where to put the rest of them.
+
+### The dimension fork, priced
+
+Worse than expected, and it is the migration story rather than the schema:
+
+- B needs **its own database** (`ragit_examples_768`). A vector column's width
+  is part of its type, so 768 and 1536 corpora cannot share tables.
+- **`ragit.Migrate` is unusable at any other dimension.** It applies migrations
+  embedded in the library. `go run ./cmd/ragit-gen -dim 768` renders a correct
+  set — that part works cleanly — but *applying* it is entirely the consumer's
+  problem: `internal/migrate` is internal, `ragit.Migrate` is not parameterised
+  by a filesystem, and `internal/migrate.TableName` is not exported, so the
+  consumer re-implements the goose runner and has to *remember* the
+  `ragit_migrations` table name. Get it wrong and goose silently starts a second
+  history in `goose_db_version`.
+- The hand-composed RLS and `tsvector` changes live in **package main** inside
+  `cmd/ragit-gen`, so nothing can import them. Fine as long as the generator is
+  the only entry point; a blocker for anyone wanting to compose them.
+- The generated **models** need nothing: `Chunk.Embedding` is `*sqlb.Vector`
+  whatever the width. Only the SQL differs.
+
+### Query-time embedding: the awkwardness is the evidence
+
+It works — the query is posted to `/extract` as a one-chunk pseudo-document and
+the vector read off the chunk — at the cost of a full extraction round trip
+(MIME detection, format dispatch, chunking) to embed six words.
+
+Worse, `Provider()`/`Model()`/`Dimension()` are **asserted, not observed**:
+xberg's response says nothing about which model produced the vectors, not in the
+chunk and not in the result metadata. Change the preset and the fingerprint goes
+on claiming BGE-base while the corpus straddles two spaces looking like one.
+
+### Measurement moved
+
+`extract-only` counts embedding work by decorating `embed.Embedder`, because
+every vector there passes through it. On this path the corpus **never touches an
+Embedder** — vectors arrive as a side effect of extraction — so the same
+decorator reports almost nothing. B counts on the HTTP client instead. Any
+cost-accounting ragit grows has to reckon with both shapes.
+
+### One guess in this plan was wrong
+
+It speculated that xberg's chunker might carry citation metadata for
+non-Markdown documents where ragit's cannot. **It does not.** The CSV and the
+PDF produce `(no heading)` in B exactly as in A — xberg's `heading_context` is
+derived from Markdown headings too. The §5 argument for keeping the chunker in
+Go is unaffected on that axis.
+
+### Retrieval, compared
+
+Same document, same 1000/200 budget:
+
+| | chunks from `handbook.md` | top hit's heading trail |
+|---|---|---|
+| A (ragit chunker) | 13 | `… › Accounts › Resetting a password` |
+| B (xberg chunker) | 5 | `… › Accounts` |
+
+B's citations are coarser because its chunks are bigger — a chunk spanning a
+whole `## Accounts` section cites that section, not the subsection that actually
+answered. If a citation UI is the requirement, that is a point for A, and it is
+the concrete version of the argument §5 made from reasoning alone. (Scores are
+not comparable across embedding spaces; do not read anything into 0.6691 vs
+0.6513.)
+
+### The shape questions, answered
+
+1. **Chunker as an interface?** *No — it does not help.* B does not want a
+   different chunker, it wants no chunking step at all. An interface would still
+   sit downstream of an Extractor that returns flat text. The needed seam is
+   earlier.
+2. **A seam for "chunks and vectors already exist"?** *Yes.* This is the finding.
+   The bypass is workable but redoes six things, three of them silently. An
+   `IngestPrepared`-shaped entry point that owns the denormalization, the
+   fingerprint stamping and the terminal state would remove all of 1, 2, 4 and 5.
+3. **One Embedder or two?** *At minimum, an Embedder must not be mandatory for
+   ingestion.* B supplies one solely so `VectorSearch` can embed a query, and
+   pays a pseudo-document hack for it. Corpus-embedding and query-embedding are
+   genuinely different jobs here.
+4. **Is `-dim` at generation time survivable?** *The generator is; the runner is
+   not.* Cheapest real fix: export the migration runner parameterised by an
+   `fs.FS`, or at least export the version-table name.
+5. **Ship the unprivileged-role SQL?** *Still open* — unchanged by B, though
+   both examples now carry the same 20 lines.
+6. **Resume guard lower down?** *Yes, and it is the single most valuable thing
+   to move.* It is the one property whose absence costs money rather than
+   tidiness.
 
 ## Shape questions these are meant to answer
 
