@@ -1,0 +1,11 @@
+sku,name,category,warehouse,quantity,unit_price_eur,reorder_level
+NW-1001,Ceramic pour-over cone,Brewing,Rotterdam,412,18.50,120
+NW-1002,Gooseneck kettle 1L,Brewing,Rotterdam,87,64.00,40
+NW-1003,Paper filters size 02 (100),Brewing,Rotterdam,1930,4.25,600
+NW-2001,"Burr grinder, hand",Grinding,Hamburg,54,89.00,30
+NW-2002,"Burr grinder, electric",Grinding,Hamburg,22,239.00,15
+NW-3001,Digital scale 0.1g,Measurement,Hamburg,166,32.00,60
+NW-3002,Brew thermometer,Measurement,Rotterdam,203,11.75,80
+NW-4001,Storage tin 500g,Storage,Lyon,780,9.50,250
+NW-4002,Vacuum canister 1kg,Storage,Lyon,95,41.00,40
+NW-5001,Cupping bowl set (6),Tasting,Lyon,31,55.00,20

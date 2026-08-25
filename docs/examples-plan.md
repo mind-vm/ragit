@@ -19,8 +19,9 @@ MinIO) so every difference between them is pipeline shape, not infrastructure.
 
 ## What xberg actually exposes
 
-Verified against the public docs (2026-08-25; re-check on upgrade — the API is
-on a `1.0.0-rc` line):
+Verified against the public docs and then against a running container —
+**xberg 1.0.14**, not the `1.0.0-rc.42` [`design.md`](design.md) §4 was written
+against. Re-check on upgrade.
 
 - `POST /extract` is the **only** extraction endpoint. There is no `/chunk` and
   no `/embed`. Chunking and embedding are **configuration on the extract call**,
@@ -36,8 +37,12 @@ on a `1.0.0-rc` line):
   `balanced` (BGE-base, 768), `quality` (BGE-large, 1024), `multilingual`
   (e5-base, 768) — or a hosted model through liter-llm, e.g.
   `openai/text-embedding-3-small`.
-- Other endpoints: `/extract-async` + `/jobs/{id}`, `/health`, `/version`,
-  `/detect`, `/formats`, `/cache/*`, `/info`, `/openapi.json`.
+- Other endpoints, read from the running server's own `/openapi.json` rather
+  than from the docs, because the two disagree: `/health`, `/version`, `/info`,
+  `/detect`, `/formats`, `/cache/*`, plus `PUT /process` and
+  `POST /v1/convert/file`. The `/extract-async` + `/jobs/{id}` pair the docs
+  describe **is not there** on 1.0.14. Nothing in the plan depends on it, but it
+  is a reminder to trust the container over the documentation.
 - **No vector store, no search.** Retrieval is ragit's job in both examples.
   "Everything by xberg" therefore has a hard ceiling: extract + chunk + embed,
   never store + search.
@@ -45,9 +50,16 @@ on a `1.0.0-rc` line):
   as an in-process library function in the language bindings only. This is the
   detail that makes example B awkward — see below.
 
-Unverified and worth confirming against a running container before writing code:
-the exact JSON shape of the `config` form field on `/extract`, and whether
-`heading_path` survives the `markdown` chunker for the formats we care about.
+Confirmed from the running server's schema: the `Chunk` object carries an
+`embedding` field, "only populated when `EmbeddingConfig` is provided in
+chunking configuration" — so extract + chunk + embed really is one call, and
+example B's premise holds.
+
+Still unverified, and the reason step 3 exists: `/extract`'s request body is
+declared as bare `multipart/form-data` with no schema, so **the exact JSON shape
+of the `config` field is not discoverable from the API description** and has to
+be probed. Likewise whether `heading_path` survives the `markdown` chunker for
+the formats we care about.
 
 ## The seam problem
 
@@ -177,8 +189,13 @@ library's real dependency surface.
 
 ## Sequencing
 
-1. `examples/compose.yaml` + `bootstrap` + fixtures. Verify the unprivileged
-   role actually has RLS applied before writing either example.
+1. ~~`examples/compose.yaml` + `bootstrap` + fixtures. Verify the unprivileged
+   role actually has RLS applied before writing either example.~~ **Done** —
+   `cd examples && make up && make verify`. Nine checks, all green, idempotent
+   on re-run. Two things it caught that would otherwise have surfaced later:
+   the PostgreSQL 18 images want their volume at `/var/lib/postgresql` rather
+   than `.../data` or the container refuses to start, and this machine had the
+   obvious host ports taken (hence 5455/8234/9200).
 2. **A first**, and note every place the README's wiring instructions turn out
    to be incomplete. A is a documentation test as much as a demo.
 3. Confirm the `/extract` chunk+embed config shape against the running
