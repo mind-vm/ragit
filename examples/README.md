@@ -7,7 +7,7 @@ the shape questions these are measured against.
 
 | | extraction | chunking | embedding | storage + search |
 |---|---|---|---|---|
-| `extract-only/` *(not written yet)* | xberg | ragit | EdenAI | ragit |
+| [`extract-only/`](extract-only) | xberg | ragit | EdenAI | ragit |
 | `xberg-owned/` *(not written yet)* | xberg | xberg | xberg | ragit |
 
 Both run against the same infrastructure, so the only thing that differs
@@ -16,9 +16,15 @@ between them is pipeline shape.
 ## Running it
 
 ```bash
-make up          # postgres+pgvector, xberg, minio
-make verify      # assert the environment is what the examples assume
+make up                # postgres+pgvector, xberg, minio
+make verify            # assert the environment is what the examples assume
+go run ./extract-only  # needs EDENAI_API_KEY, see below
 ```
+
+`extract-only` is safe to re-run: the corpus belongs to a fixed tenant, uploads
+are deduplicated against the application's own table, and `ProcessDocument`
+resumes — so a second run makes zero embedding calls and says so. `-reset`
+forces a full re-embed, which costs money.
 
 `make verify` is not a smoke test — it is the gate. Two of the properties these
 examples depend on fail *silently*:
@@ -37,8 +43,15 @@ which wins. The EdenAI key is read from the environment only and is never
 written into this repo:
 
 ```bash
-set -a; . ~/.config/envs/valiro-go.env; set +a
+export EDENAI_API_KEY=$(grep '^EDENAI_API_KEY=' ~/.config/envs/valiro-go.env | cut -d= -f2-)
 ```
+
+**Export the one variable — do not source the file.** Every env file in
+`~/.config/envs` sets a `DATABASE_URL` of its own, and the environment beats
+`.env`, so sourcing one silently repoints these examples at a real project's
+database — where bootstrap would then create roles and tables. `bootstrap`
+refuses to touch any database not named `ragit_examples` for exactly that
+reason; override with `RAGIT_EXAMPLES_ALLOW_ANY_DB=1` if you mean it.
 
 Ports are deliberately odd — Postgres on 5455, xberg on 8234, MinIO on 9200 —
 because the obvious alternatives were already taken on the machine this was
@@ -49,8 +62,10 @@ built on. Override with `POSTGRES_PORT`, `XBERG_PORT`, `MINIO_PORT`.
 ```
 compose.yaml            postgres+pgvector, xberg, minio
 verify/                 the environment gate described above
+extract-only/           xberg extracts; ragit chunks, embeds, stores, searches
 fixtures/               three documents: markdown, csv, pdf
 internal/bootstrap/     migrations, the unprivileged role, the host app's schema
+internal/demo/          what both examples share: counters, dedupe, reporting
 ```
 
 `internal/bootstrap` is where a host application's startup path would live. Two

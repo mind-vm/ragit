@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bufio"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -66,6 +67,9 @@ func LoadConfig() (Config, error) {
 	}
 	cfg.EmbeddingDim = dim
 
+	if err := cfg.checkDatabaseName(); err != nil {
+		return Config{}, err
+	}
 	if !isSafeIdentifier(cfg.AppRole) {
 		// The role name is interpolated into DDL — PostgreSQL cannot
 		// parameterise a role — so it is checked rather than trusted.
@@ -76,9 +80,49 @@ func LoadConfig() (Config, error) {
 
 // RequireEdenAI reports a missing key with the fix rather than letting the
 // first embedding call fail somewhere less obvious.
+//
+// The suggested command exports one variable rather than sourcing the file.
+// Those env files carry a DATABASE_URL of their own, and sourcing one would
+// silently repoint everything below at a real project's database — where
+// Setup would then create roles and tables.
 func (c Config) RequireEdenAI() error {
 	if c.EdenAIKey == "" {
-		return fmt.Errorf("EDENAI_API_KEY is not set; run: set -a; . ~/.config/envs/valiro-go.env; set +a")
+		return fmt.Errorf("EDENAI_API_KEY is not set; run:\n" +
+			"  export EDENAI_API_KEY=$(grep '^EDENAI_API_KEY=' ~/.config/envs/valiro-go.env | cut -d= -f2-)")
+	}
+	return nil
+}
+
+// ExpectedDatabase is the database these examples are allowed to modify.
+const ExpectedDatabase = "ragit_examples"
+
+// AllowAnyDatabaseEnv opts out of that check.
+const AllowAnyDatabaseEnv = "RAGIT_EXAMPLES_ALLOW_ANY_DB"
+
+// checkDatabaseName refuses to touch a database that is not obviously this
+// example's own.
+//
+// Setup creates roles and tables. DATABASE_URL is an extremely common variable
+// to already have exported — every project env file in ~/.config/envs sets one
+// — so the realistic accident is not a typo but a shell that was already
+// pointed somewhere real. Failing loudly costs one env var to override and
+// saves a migration applied to a production database.
+func (c Config) checkDatabaseName() error {
+	if os.Getenv(AllowAnyDatabaseEnv) == "1" {
+		return nil
+	}
+	u, err := url.Parse(c.AdminDSN)
+	if err != nil {
+		return fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
+	name := strings.TrimPrefix(u.Path, "/")
+	if name != ExpectedDatabase {
+		return fmt.Errorf(
+			"DATABASE_URL points at database %q, not %q.\n"+
+				"  These examples create roles and tables. If that is genuinely what you want,\n"+
+				"  set %s=1. If it is not, you probably sourced a project env file — export\n"+
+				"  EDENAI_API_KEY on its own instead of sourcing the whole thing.",
+			name, ExpectedDatabase, AllowAnyDatabaseEnv)
 	}
 	return nil
 }

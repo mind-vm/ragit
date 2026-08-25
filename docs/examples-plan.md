@@ -196,8 +196,9 @@ library's real dependency surface.
    the PostgreSQL 18 images want their volume at `/var/lib/postgresql` rather
    than `.../data` or the container refuses to start, and this machine had the
    obvious host ports taken (hence 5455/8234/9200).
-2. **A first**, and note every place the README's wiring instructions turn out
-   to be incomplete. A is a documentation test as much as a demo.
+2. ~~**A first**, and note every place the README's wiring instructions turn out
+   to be incomplete. A is a documentation test as much as a demo.~~ **Done** —
+   `examples/extract-only`. See "What A found" below.
 3. Confirm the `/extract` chunk+embed config shape against the running
    container. If chunking-with-embeddings does not work over REST as documented,
    B changes shape and we should re-plan rather than improvise.
@@ -207,6 +208,66 @@ library's real dependency surface.
    (`CreateDocument` + enqueue + worker) or stay synchronous on `Ingest`.
    Recommend adding it: [`jobs/`](../jobs) has never been exercised from
    outside this module.
+
+## What A found
+
+`examples/extract-only` was written against the shipped API and **needed no
+library changes**, which is the result the plan hoped for: the README's wiring
+instructions are complete and correct, and a consumer can build this pipeline
+from the outside. Four things it turned up anyway.
+
+**Full-text search silently returns nothing for a natural-language question.**
+ragit's `search_vector` is a `'simple'`-config `tsvector` queried with
+`websearch_to_tsquery('simple', …)`. §9 chose `'simple'` deliberately —
+language-agnostic, no stemming — but `'simple'` also has no *stopword*
+dictionary, and `websearch_to_tsquery` ANDs every surviving token. Verified
+against the running database:
+
+```
+to_tsvector('simple',  'how do I reset my password')
+  → 'do':2 'how':1 'i':3 'my':5 'password':6 'reset':4
+websearch_to_tsquery('simple', 'how do I reset my password?')
+  → 'how' & 'do' & 'i' & 'reset' & 'my' & 'password'
+to_tsvector('english', 'how do I reset my password')
+  → 'password':6 'reset':4
+```
+
+So `FullTextSearch` asks for a chunk containing "how" and "do" and "i", finds
+none, and returns an empty slice — indistinguishable from an empty corpus. The
+same question through `VectorSearch` returns five good hits. This is not a bug,
+but it is an unwritten precondition on a public method, and the README's own
+retrieval example is a natural-language question. **Shape question 7: should
+`FullTextSearch` document this, strip stopwords, or use `OR` semantics?**
+
+**Non-Markdown documents lose their citation trail.** The CSV and the PDF each
+produced one chunk with an empty `HeadingPath`, because ragit's chunker derives
+the trail from Markdown headings and neither document has any — xberg renders
+the CSV as a Markdown *table*, which has no headings at all. A citation UI gets
+"(no heading)" for every non-Markdown source. Worth holding onto for the
+comparison: xberg's own chunker carries `heading_path` and
+`prepend_heading_context`, so B may well do better here, on the very axis §5
+used to justify keeping the chunker in Go.
+
+**`documents.embedding_model` is not the fingerprint.** It stores
+`embedder.Model()` alone (ragit.go:311) while each chunk stores the full
+`provider|model|dimension`. So the document-level column cannot distinguish two
+providers serving the same model name, nor two dimensions of one — which is
+exactly the straddled state it appears to report on. `CountMisalignedChunks` is
+the read that actually answers it. **Shape question 8: should that column carry
+the fingerprint instead?**
+
+**`DATABASE_URL` is a loaded gun for a consumer's examples.** Every env file in
+`~/.config/envs` sets one, the environment beats a `.env`, and `bootstrap`
+creates roles and tables — so sourcing a project env file to pick up the EdenAI
+key would have pointed the examples' migrations at a real database. Bootstrap
+now refuses any database not named `ragit_examples`. Nothing for the library to
+fix, but it says something about how the README should phrase credential setup.
+
+Confirmed working, for the record: the resume guard (a second pass over
+unchanged documents makes **zero** embedding calls), attribute narrowing
+(5 results → 2 under `team=warehouse`), tenant confinement (tenant B sees
+nothing), and the three-layer extractor chain with
+`RunIsolatedChildIfInvoked()` wired from `main()`.
 
 ## Shape questions these are meant to answer
 
@@ -225,6 +286,10 @@ rationalised afterwards:
    superuser/RLS trap?
 6. Does the resume guard belong to `ProcessDocument`, or lower down where a
    bypassing caller could still use it?
+7. Should `FullTextSearch` document, or fix, the fact that a natural-language
+   question matches nothing under the `'simple'` config? *(raised by A)*
+8. Should `documents.embedding_model` carry the full fingerprint rather than the
+   model name? *(raised by A)*
 
 ## Sources
 
