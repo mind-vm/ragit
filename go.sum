@@ -79,8 +79,8 @@ github.com/mdelapenya/tlscert v0.2.0 h1:7H81W6Z/4weDvZBNOfQte5GpIMo0lGYEeWbkGp5L
 github.com/mdelapenya/tlscert v0.2.0/go.mod h1:O4njj3ELLnJjGdkN7M/vIVCpZ+Cf0L6muqOG4tLSl8o=
 github.com/mfridman/interpolate v0.0.2 h1:pnuTK7MQIxxFz1Gr+rjSIx9u7qVjf5VOoM/u6BbAxPY=
 github.com/mfridman/interpolate v0.0.2/go.mod h1:p+7uk6oE07mpE/Ik1b8EckO0O4ZXiGAfshKBWLUM9Xg=
-github.com/mind-vm/sqlb v0.18.0 h1:TzD4p1cQe2+44vNyww/UaO4qc+7wiYjJ9dy0dA3Pq34=
-github.com/mind-vm/sqlb v0.18.0/go.mod h1:v13+FsGYJkPfkmZgSlDDvhlZAJ6EkvjPKGZpyOQIH24=
+github.com/mind-vm/sqlb v0.20.0 h1:mGsXMkiH0gGnglIFXP7kCAEgkOwBhnu1KoGQfMGZ6UI=
+github.com/mind-vm/sqlb v0.20.0/go.mod h1:v13+FsGYJkPfkmZgSlDDvhlZAJ6EkvjPKGZpyOQIH24=
 github.com/minio/crc64nvme v1.1.1 h1:8dwx/Pz49suywbO+auHCBpCtlW1OfpcLN7wYgVR6wAI=
 github.com/minio/crc64nvme v1.1.1/go.mod h1:eVfm2fAzLlxMdUGc0EEBGSMmPwmXD5XiNRpnu9J3bvg=
 github.com/minio/md5-simd v1.1.2 h1:Gdi1DZK69+ZVMoNHRXJyNcxrMA4dSxoYHZSQbirFg34=
