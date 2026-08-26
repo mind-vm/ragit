@@ -85,8 +85,8 @@ func TestIngestPrepared_IndexesWithoutTheFrontHalfOfThePipeline(t *testing.T) {
 	require.Equal(t, int32(2), *doc.ChunkCount)
 	require.NotNil(t, doc.TextContent)
 	require.Equal(t, prepared.Text, *doc.TextContent)
-	require.NotNil(t, doc.EmbeddingModel)
-	require.Equal(t, preparedSpace.Model, *doc.EmbeddingModel)
+	require.NotNil(t, doc.EmbeddingFingerprint)
+	require.Equal(t, preparedSpace.Fingerprint(), *doc.EmbeddingFingerprint)
 	require.NotNil(t, doc.ProcessedAt)
 	require.JSONEq(t, `{"extractor":"xberg"}`, string(doc.Metadata))
 
@@ -171,7 +171,7 @@ func TestIngestPrepared_ReindexesWhenTheSpaceChanges(t *testing.T) {
 
 	doc, err := processor.GetDocument(ctx, ragit.Tenant(tenantID), documentID)
 	require.NoError(t, err)
-	require.Equal(t, "e5-large-v2", *doc.EmbeddingModel)
+	require.Equal(t, "xberg|e5-large-v2|1536", *doc.EmbeddingFingerprint)
 }
 
 func TestIngestPrepared_PublishesTheTerminalEvent(t *testing.T) {

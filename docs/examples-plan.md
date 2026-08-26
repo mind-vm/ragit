@@ -303,7 +303,8 @@ comparison: xberg's own chunker carries `heading_path` and
 `prepend_heading_context`, so B may well do better here, on the very axis §5
 used to justify keeping the chunker in Go.
 
-**`documents.embedding_model` is not the fingerprint.** It stores
+**`documents.embedding_model` is not the fingerprint.** *(Fixed: it is now
+`embedding_fingerprint` and carries one.)* It stores
 `embedder.Model()` alone (ragit.go:311) while each chunk stores the full
 `provider|model|dimension`. So the document-level column cannot distinguish two
 providers serving the same model name, nor two dimensions of one — which is
@@ -612,9 +613,23 @@ of.
 
 ### Still open
 
-- **Shape question 8** — `documents.embedding_model` still stores the model
-  name alone. `IngestPrepared` writes `Space.Model` for consistency with
-  ProcessDocument rather than quietly giving one path a different meaning.
+- ~~**Shape question 8** — `documents.embedding_model` and the fingerprint.~~
+  **Answered, and fixed**: the column is now `embedding_fingerprint` and holds
+  the whole `provider|model|dimension`, the same identity every chunk carries,
+  written the same way by both ingestion paths. Renaming rather than
+  redefining, because a column called `embedding_model` holding a fingerprint
+  is the same lie in the other direction.
+
+  **Upgrade note for an existing deployment:** the schema is regenerated in
+  place while the initial migration is still being authored, so a database
+  already at version 2 will not pick this up. One statement, and the accurate
+  value is already sitting on the chunks:
+
+  ```sql
+  ALTER TABLE ragit_documents RENAME COLUMN embedding_model TO embedding_fingerprint;
+  UPDATE ragit_documents d SET embedding_fingerprint =
+      (SELECT c.embedding_fingerprint FROM ragit_chunks c WHERE c.document_id = d.id LIMIT 1);
+  ```
 - ~~**Shape question 4** — the `-dim` runner.~~ **Answered, and fixed.**
   `ragit.Migrate` takes `ragit.FromFS(fsys)`, so a rendered set goes through
   ragit's own runner and version table; `ragit.MigrationsTable` is exported for
@@ -672,7 +687,8 @@ rationalised afterwards:
 7. Should `FullTextSearch` document, or fix, the fact that a natural-language
    question matches nothing under the `'simple'` config? *(raised by A)*
 8. Should `documents.embedding_model` carry the full fingerprint rather than the
-   model name? *(raised by A)*
+   model name? *(raised by A; answered yes — the column is now
+   `embedding_fingerprint`. See "What the seam changed".)*
 
 ## Sources
 

@@ -321,7 +321,7 @@ func (p *Processor) processDocument(ctx context.Context, doc *Document) error {
 	}
 
 	count := int32(len(chunks))
-	done := &indexed{text: result.Text, metadata: result.Metadata, model: p.embedder.Model()}
+	done := &indexed{text: result.Text, metadata: result.Metadata, fingerprint: embed.Fingerprint(p.embedder)}
 	if err := p.finish(ctx, doc, StatusReady, nil, &count, done); err != nil {
 		return err
 	}
@@ -333,12 +333,15 @@ func (p *Processor) processDocument(ctx context.Context, doc *Document) error {
 // text a caller can show, the extractor's metadata, and the embedding space
 // the corpus now lives in.
 //
-// The model comes in rather than off p.embedder because the corpus is not
+// The space comes in rather than off p.embedder because the corpus is not
 // always the embedder's work — see [Processor.IngestPrepared].
 type indexed struct {
 	text     string
 	metadata json.RawMessage
-	model    string
+	// fingerprint is the whole provider|model|dimension identity, matching
+	// what every chunk carries. The model name alone cannot tell two providers
+	// serving it apart, nor two dimensions of one.
+	fingerprint string
 }
 
 // finish writes the document's terminal state.
@@ -361,7 +364,7 @@ func (p *Processor) finish(ctx context.Context, doc *Document, status string, er
 			now := time.Now()
 			u = u.Set("text_content", &result.text).
 				Set("metadata", metadata).
-				Set("embedding_model", &result.model).
+				Set("embedding_fingerprint", &result.fingerprint).
 				Set("processed_at", &now)
 		}
 

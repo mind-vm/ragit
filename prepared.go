@@ -166,7 +166,7 @@ func (p *Processor) ingestPrepared(ctx context.Context, doc *Document, prepared 
 	}
 
 	count := int32(len(prepared.Chunks))
-	done := &indexed{text: prepared.Text, metadata: prepared.Metadata, model: prepared.Space.Model}
+	done := &indexed{text: prepared.Text, metadata: prepared.Metadata, fingerprint: fingerprint}
 	if err := p.finish(ctx, doc, StatusReady, nil, &count, done); err != nil {
 		return err
 	}

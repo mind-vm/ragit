@@ -67,8 +67,11 @@ func TestIngest_EndToEnd(t *testing.T) {
 	require.Equal(t, ragit.StatusReady, doc.Status)
 	require.NotNil(t, doc.ChunkCount)
 	require.NotZero(t, *doc.ChunkCount)
-	require.NotNil(t, doc.EmbeddingModel)
-	require.Equal(t, embed.DefaultModel, *doc.EmbeddingModel)
+	// The document names the whole embedding space, not just the model — the
+	// same identity every chunk carries, so the two cannot disagree.
+	require.NotNil(t, doc.EmbeddingFingerprint)
+	require.Equal(t, embed.Fingerprint(embedder), *doc.EmbeddingFingerprint)
+	require.Contains(t, *doc.EmbeddingFingerprint, embed.DefaultModel)
 
 	// The generated model carries the extracted text and metadata, so a
 	// consumer never needs a bespoke accessor for them.

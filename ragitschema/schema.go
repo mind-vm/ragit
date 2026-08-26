@@ -103,7 +103,14 @@ func New(dimension int) *Schema {
 			Comment("application-supplied key/value pairs, filterable by containment"),
 
 		schema.Int("chunk_count").Nullable().Sortable(),
-		schema.Text("embedding_model").Nullable().Filterable(),
+
+		// The full provider|model|dimension identity of the space this
+		// document's chunks were embedded into, not the model name alone. The
+		// name alone cannot tell two providers serving the same model apart,
+		// nor two dimensions of one — which is exactly the straddled state
+		// this column looks like it reports on.
+		schema.Text("embedding_fingerprint").Nullable().Filterable().
+			Comment("provider|model|dimension of the space this document's chunks live in"),
 		schema.Timestamp("processed_at").Nullable().Sortable(),
 
 		// Retention clock. NULL means "keep until deleted", so a durable

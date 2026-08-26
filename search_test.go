@@ -162,6 +162,56 @@ func TestVectorSearch_MinScoreDropsWeakMatches(t *testing.T) {
 	require.Equal(t, pgDoc.ID, results[0].DocumentID)
 }
 
+// TestDocument_NamesTheWholeEmbeddingSpace is shape question 8. The document
+// row used to store the model name alone, so two providers serving the same
+// model — the straddled state the column looks like it reports on — produced
+// two documents claiming the same embedding space. The chunks knew better all
+// along; the catalog above them did not.
+func TestDocument_NamesTheWholeEmbeddingSpace(t *testing.T) {
+	h := newHarness(t, "provider-a")
+	ctx := context.Background()
+	tenantID := uuid.New()
+
+	docA := h.ingest(t, ragit.DocumentInput{
+		TenantID: tenantID, Filename: "a.md", MimeType: "text/markdown",
+		Data: []byte("Postgres stores relational data durably."),
+	})
+
+	// Same wire format, same model, same width — a different provider is the
+	// only difference, and it is enough to make the vectors incomparable.
+	embedServer := newKeywordEmbedServer(t)
+	defer embedServer.Close()
+	other, err := embed.NewOpenAICompatible(embed.OpenAICompatibleConfig{
+		APIKey: "k", BaseURL: embedServer.URL, Provider: "provider-b", Dimension: searchEmbedDim,
+	})
+	require.NoError(t, err)
+	require.Equal(t, h.embedder.Model(), other.Model(), "the model name must be the thing they share")
+
+	otherProcessor := ragit.New(h.pool,
+		extract.NewXbergExtractor(newEchoExtractServer(t).URL, 0),
+		chunk.New(chunk.DefaultConfig()), other, h.store)
+	docB, err := otherProcessor.Ingest(ctx, ragit.DocumentInput{
+		TenantID: tenantID, Filename: "b.md", MimeType: "text/markdown",
+		Data: []byte("Kubernetes schedules containers across nodes."),
+	})
+	require.NoError(t, err)
+	require.Equal(t, ragit.StatusReady, docB.Status)
+
+	require.NotEqual(t, *docA.EmbeddingFingerprint, *docB.EmbeddingFingerprint,
+		"two providers serving one model are two embedding spaces, and the catalog must say so")
+
+	// And each document agrees with its own chunks, which is the property that
+	// makes the column answerable at all.
+	for _, doc := range []*ragit.Document{docA, docB} {
+		chunks, err := h.processor.ListChunks(ctx, ragit.Tenant(tenantID), doc.ID)
+		require.NoError(t, err)
+		require.NotEmpty(t, chunks)
+		for _, c := range chunks {
+			require.Equal(t, *doc.EmbeddingFingerprint, *c.EmbeddingFingerprint)
+		}
+	}
+}
+
 func TestVectorSearch_IgnoresChunksFromAnotherEmbeddingSpace(t *testing.T) {
 	h := newHarness(t, "provider-a")
 	tenantID := uuid.New()

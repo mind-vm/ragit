@@ -16,32 +16,31 @@ func Section(title string) {
 // PrintDocuments reports the catalog: what is indexed, in what state, and
 // under which embedding model.
 //
-// The model is on this line rather than buried because embedding-space
-// alignment is what makes a corpus searchable — chunks embedded under a
-// different fingerprint are excluded from vector search rather than ranked, so
-// a corpus that straddles two spaces looks like one that simply has fewer
-// answers.
+// The embedding space is on this line rather than buried because alignment is
+// what makes a corpus searchable — chunks embedded under a different
+// fingerprint are excluded from vector search rather than ranked, so a corpus
+// that straddles two spaces looks like one that simply has fewer answers.
 //
-// Note the column is the *model*, not the fingerprint. documents.embedding_model
-// stores embedder.Model() alone, while each chunk stores the full
-// provider|model|dimension. So this column cannot tell two providers serving
-// the same model name apart, nor two dimensions of it — which is precisely the
-// straddle it looks like it is reporting. Processor.CountMisalignedChunks is
-// the read that actually answers the question.
+// This column used to hold the model name alone, which could not tell two
+// providers serving that model apart, nor two dimensions of it — precisely the
+// straddle it looked like it was reporting. It now carries the whole
+// provider|model|dimension, the same identity every chunk carries.
+// Processor.CountMisalignedChunks is still the read that answers whether a
+// corpus has actually straddled, chunk by chunk.
 func PrintDocuments(docs []ragit.Document) {
 	if len(docs) == 0 {
 		fmt.Println("  (no documents)")
 		return
 	}
-	fmt.Printf("  %-18s %-18s %7s  %s\n", "FILENAME", "STATUS", "CHUNKS", "EMBEDDING MODEL")
+	fmt.Printf("  %-18s %-18s %7s  %s\n", "FILENAME", "STATUS", "CHUNKS", "EMBEDDING SPACE")
 	for _, d := range docs {
 		chunks := "-"
 		if d.ChunkCount != nil {
 			chunks = fmt.Sprintf("%d", *d.ChunkCount)
 		}
 		space := "-"
-		if d.EmbeddingModel != nil {
-			space = *d.EmbeddingModel
+		if d.EmbeddingFingerprint != nil {
+			space = *d.EmbeddingFingerprint
 		}
 		fmt.Printf("  %-18s %-18s %7s  %s\n", d.Filename, d.Status, chunks, space)
 		if d.Error != nil && *d.Error != "" {

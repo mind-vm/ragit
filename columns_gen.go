@@ -154,48 +154,48 @@ func (u *ChunkUpdate) Where(preds ...sqlb.Pred) *ChunkUpdate {
 func (u *ChunkUpdate) Stmt() *sqlb.Update[Chunk] { return u.stmt }
 
 type documentColumns struct {
-	ID             sqlb.Col[uuid.UUID]
-	TenantID       sqlb.Col[uuid.UUID]
-	ScopeAID       sqlb.Col[uuid.UUID]
-	ScopeBID       sqlb.Col[uuid.UUID]
-	SessionID      sqlb.Col[uuid.UUID]
-	SourceURI      sqlb.TextCol[string]
-	Filename       sqlb.TextCol[string]
-	MimeType       sqlb.TextCol[string]
-	Status         sqlb.TextCol[string]
-	Error          sqlb.TextCol[string]
-	TextContent    sqlb.TextCol[string]
-	Metadata       sqlb.Col[json.RawMessage]
-	Attributes     sqlb.Col[json.RawMessage]
-	ChunkCount     sqlb.Col[int32]
-	EmbeddingModel sqlb.TextCol[string]
-	ProcessedAt    sqlb.Col[time.Time]
-	ExpiresAt      sqlb.Col[time.Time]
-	CreatedAt      sqlb.Col[time.Time]
-	UpdatedAt      sqlb.Col[time.Time]
+	ID                   sqlb.Col[uuid.UUID]
+	TenantID             sqlb.Col[uuid.UUID]
+	ScopeAID             sqlb.Col[uuid.UUID]
+	ScopeBID             sqlb.Col[uuid.UUID]
+	SessionID            sqlb.Col[uuid.UUID]
+	SourceURI            sqlb.TextCol[string]
+	Filename             sqlb.TextCol[string]
+	MimeType             sqlb.TextCol[string]
+	Status               sqlb.TextCol[string]
+	Error                sqlb.TextCol[string]
+	TextContent          sqlb.TextCol[string]
+	Metadata             sqlb.Col[json.RawMessage]
+	Attributes           sqlb.Col[json.RawMessage]
+	ChunkCount           sqlb.Col[int32]
+	EmbeddingFingerprint sqlb.TextCol[string]
+	ProcessedAt          sqlb.Col[time.Time]
+	ExpiresAt            sqlb.Col[time.Time]
+	CreatedAt            sqlb.Col[time.Time]
+	UpdatedAt            sqlb.Col[time.Time]
 }
 
 // DocumentCols are the typed columns of ragit_documents.
 var DocumentCols = documentColumns{
-	ID:             sqlb.Typed[uuid.UUID]("id"),
-	TenantID:       sqlb.Typed[uuid.UUID]("tenant_id"),
-	ScopeAID:       sqlb.Typed[uuid.UUID]("scope_a_id"),
-	ScopeBID:       sqlb.Typed[uuid.UUID]("scope_b_id"),
-	SessionID:      sqlb.Typed[uuid.UUID]("session_id"),
-	SourceURI:      sqlb.TextColumn[string]("source_uri"),
-	Filename:       sqlb.TextColumn[string]("filename"),
-	MimeType:       sqlb.TextColumn[string]("mime_type"),
-	Status:         sqlb.TextColumn[string]("status"),
-	Error:          sqlb.TextColumn[string]("error"),
-	TextContent:    sqlb.TextColumn[string]("text_content"),
-	Metadata:       sqlb.Typed[json.RawMessage]("metadata"),
-	Attributes:     sqlb.Typed[json.RawMessage]("attributes"),
-	ChunkCount:     sqlb.Typed[int32]("chunk_count"),
-	EmbeddingModel: sqlb.TextColumn[string]("embedding_model"),
-	ProcessedAt:    sqlb.Typed[time.Time]("processed_at"),
-	ExpiresAt:      sqlb.Typed[time.Time]("expires_at"),
-	CreatedAt:      sqlb.Typed[time.Time]("created_at"),
-	UpdatedAt:      sqlb.Typed[time.Time]("updated_at"),
+	ID:                   sqlb.Typed[uuid.UUID]("id"),
+	TenantID:             sqlb.Typed[uuid.UUID]("tenant_id"),
+	ScopeAID:             sqlb.Typed[uuid.UUID]("scope_a_id"),
+	ScopeBID:             sqlb.Typed[uuid.UUID]("scope_b_id"),
+	SessionID:            sqlb.Typed[uuid.UUID]("session_id"),
+	SourceURI:            sqlb.TextColumn[string]("source_uri"),
+	Filename:             sqlb.TextColumn[string]("filename"),
+	MimeType:             sqlb.TextColumn[string]("mime_type"),
+	Status:               sqlb.TextColumn[string]("status"),
+	Error:                sqlb.TextColumn[string]("error"),
+	TextContent:          sqlb.TextColumn[string]("text_content"),
+	Metadata:             sqlb.Typed[json.RawMessage]("metadata"),
+	Attributes:           sqlb.Typed[json.RawMessage]("attributes"),
+	ChunkCount:           sqlb.Typed[int32]("chunk_count"),
+	EmbeddingFingerprint: sqlb.TextColumn[string]("embedding_fingerprint"),
+	ProcessedAt:          sqlb.Typed[time.Time]("processed_at"),
+	ExpiresAt:            sqlb.Typed[time.Time]("expires_at"),
+	CreatedAt:            sqlb.Typed[time.Time]("created_at"),
+	UpdatedAt:            sqlb.Typed[time.Time]("updated_at"),
 }
 
 // DocumentUpdate is a typed update statement for ragit_documents.
@@ -286,9 +286,9 @@ func (u *DocumentUpdate) SetChunkCount(v *int32) *DocumentUpdate {
 	return u
 }
 
-// SetEmbeddingModel sets embedding_model.
-func (u *DocumentUpdate) SetEmbeddingModel(v *string) *DocumentUpdate {
-	u.stmt.Set("embedding_model", v)
+// SetEmbeddingFingerprint sets embedding_fingerprint.
+func (u *DocumentUpdate) SetEmbeddingFingerprint(v *string) *DocumentUpdate {
+	u.stmt.Set("embedding_fingerprint", v)
 	return u
 }
 

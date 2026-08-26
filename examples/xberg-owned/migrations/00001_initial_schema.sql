@@ -42,7 +42,7 @@ CREATE TABLE "ragit_documents" (
     "metadata" jsonb NOT NULL DEFAULT '{}',
     "attributes" jsonb NOT NULL DEFAULT '{}',
     "chunk_count" integer,
-    "embedding_model" text,
+    "embedding_fingerprint" text,
     "processed_at" timestamptz,
     "expires_at" timestamptz,
     "created_at" timestamptz NOT NULL DEFAULT now(),
@@ -53,6 +53,7 @@ COMMENT ON TABLE "ragit_documents" IS 'A source document ingested by ragit.';
 COMMENT ON COLUMN "ragit_documents"."status" IS 'pending|processing|ready|error|skipped_too_large';
 COMMENT ON COLUMN "ragit_documents"."metadata" IS 'the extractor''s own structured output: page count, language, detected tables';
 COMMENT ON COLUMN "ragit_documents"."attributes" IS 'application-supplied key/value pairs, filterable by containment';
+COMMENT ON COLUMN "ragit_documents"."embedding_fingerprint" IS 'provider|model|dimension of the space this document''s chunks live in';
 -- +goose StatementEnd
 -- add foreign key ragit_chunks_document_id_fkey
 ALTER TABLE "ragit_chunks" ADD CONSTRAINT "ragit_chunks_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "ragit_documents" ("id") ON DELETE CASCADE;

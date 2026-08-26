@@ -205,7 +205,7 @@ create table documents (
     text_content     text,                -- full extracted text, stored directly (see note)
     metadata        jsonb not null default '{}',  -- page count, language, tables, warnings from xberg
     chunk_count     int,
-    embedding_model text,
+    embedding_fingerprint text,      -- "provider|model|dimension", matching the chunks' (§8)
     processed_at    timestamptz,
     created_at      timestamptz not null default now(),
     updated_at      timestamptz not null default now()

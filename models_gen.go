@@ -34,25 +34,25 @@ func (Chunk) TableName() string { return "ragit_chunks" }
 
 // Document a source document ingested by ragit.
 type Document struct {
-	ID             uuid.UUID       `db:"id" json:"id" sqlb:"type:uuid,pk,default,filter,readonly"`
-	TenantID       uuid.UUID       `db:"tenant_id" json:"tenant_id" sqlb:"type:uuid,filter,readonly,scope"`
-	ScopeAID       *uuid.UUID      `db:"scope_a_id" json:"scope_a_id" sqlb:"type:uuid,filter"`
-	ScopeBID       *uuid.UUID      `db:"scope_b_id" json:"scope_b_id" sqlb:"type:uuid,filter"`
-	SessionID      *uuid.UUID      `db:"session_id" json:"session_id" sqlb:"type:uuid,filter"`
-	SourceURI      *string         `db:"source_uri" json:"source_uri" sqlb:"type:text"`
-	Filename       string          `db:"filename" json:"filename" sqlb:"type:text,filter,sort"`
-	MimeType       string          `db:"mime_type" json:"mime_type" sqlb:"type:text,filter"`
-	Status         string          `db:"status" json:"status" sqlb:"type:text,default,filter,sort"` // pending|processing|ready|error|skipped_too_large
-	Error          *string         `db:"error" json:"error" sqlb:"type:text"`
-	TextContent    *string         `db:"text_content" json:"text_content" sqlb:"type:text"`
-	Metadata       json.RawMessage `db:"metadata" json:"metadata" sqlb:"type:jsonb,default"`     // the extractor's own structured output: page count, language, detected tables
-	Attributes     json.RawMessage `db:"attributes" json:"attributes" sqlb:"type:jsonb,default"` // application-supplied key/value pairs, filterable by containment
-	ChunkCount     *int32          `db:"chunk_count" json:"chunk_count" sqlb:"type:int,sort"`
-	EmbeddingModel *string         `db:"embedding_model" json:"embedding_model" sqlb:"type:text,filter"`
-	ProcessedAt    *time.Time      `db:"processed_at" json:"processed_at" sqlb:"type:timestamptz,sort"`
-	ExpiresAt      *time.Time      `db:"expires_at" json:"expires_at" sqlb:"type:timestamptz,filter"`
-	CreatedAt      time.Time       `db:"created_at" json:"created_at" sqlb:"type:timestamptz,default,sort,readonly"`
-	UpdatedAt      time.Time       `db:"updated_at" json:"updated_at" sqlb:"type:timestamptz,default,sort,readonly"`
+	ID                   uuid.UUID       `db:"id" json:"id" sqlb:"type:uuid,pk,default,filter,readonly"`
+	TenantID             uuid.UUID       `db:"tenant_id" json:"tenant_id" sqlb:"type:uuid,filter,readonly,scope"`
+	ScopeAID             *uuid.UUID      `db:"scope_a_id" json:"scope_a_id" sqlb:"type:uuid,filter"`
+	ScopeBID             *uuid.UUID      `db:"scope_b_id" json:"scope_b_id" sqlb:"type:uuid,filter"`
+	SessionID            *uuid.UUID      `db:"session_id" json:"session_id" sqlb:"type:uuid,filter"`
+	SourceURI            *string         `db:"source_uri" json:"source_uri" sqlb:"type:text"`
+	Filename             string          `db:"filename" json:"filename" sqlb:"type:text,filter,sort"`
+	MimeType             string          `db:"mime_type" json:"mime_type" sqlb:"type:text,filter"`
+	Status               string          `db:"status" json:"status" sqlb:"type:text,default,filter,sort"` // pending|processing|ready|error|skipped_too_large
+	Error                *string         `db:"error" json:"error" sqlb:"type:text"`
+	TextContent          *string         `db:"text_content" json:"text_content" sqlb:"type:text"`
+	Metadata             json.RawMessage `db:"metadata" json:"metadata" sqlb:"type:jsonb,default"`     // the extractor's own structured output: page count, language, detected tables
+	Attributes           json.RawMessage `db:"attributes" json:"attributes" sqlb:"type:jsonb,default"` // application-supplied key/value pairs, filterable by containment
+	ChunkCount           *int32          `db:"chunk_count" json:"chunk_count" sqlb:"type:int,sort"`
+	EmbeddingFingerprint *string         `db:"embedding_fingerprint" json:"embedding_fingerprint" sqlb:"type:text,filter"` // provider|model|dimension of the space this document's chunks live in
+	ProcessedAt          *time.Time      `db:"processed_at" json:"processed_at" sqlb:"type:timestamptz,sort"`
+	ExpiresAt            *time.Time      `db:"expires_at" json:"expires_at" sqlb:"type:timestamptz,filter"`
+	CreatedAt            time.Time       `db:"created_at" json:"created_at" sqlb:"type:timestamptz,default,sort,readonly"`
+	UpdatedAt            time.Time       `db:"updated_at" json:"updated_at" sqlb:"type:timestamptz,default,sort,readonly"`
 }
 
 // TableName is the table Document maps to.
