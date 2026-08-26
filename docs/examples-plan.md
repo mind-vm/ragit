@@ -291,6 +291,8 @@ same question through `VectorSearch` returns five good hits. This is not a bug,
 but it is an unwritten precondition on a public method, and the README's own
 retrieval example is a natural-language question. **Shape question 7: should
 `FullTextSearch` document this, strip stopwords, or use `OR` semantics?**
+*(Answered below: none of the three as stated — strict first, any-term on a
+miss.)*
 
 **Non-Markdown documents lose their citation trail.** The CSV and the PDF each
 produced one chunk with an empty `HeadingPath`, because ragit's chunker derives
@@ -615,8 +617,16 @@ of.
 - **Shape question 4** — the `-dim` runner. Unchanged: `xberg-owned` still
   carries its own goose runner in `migrations/`.
 - **Shape question 5** — the unprivileged-role SQL. Unchanged.
-- **Shape question 7** — `FullTextSearch` under the `simple` config.
-  Unchanged.
+- ~~**Shape question 7** — `FullTextSearch` under the `simple` config.~~
+  **Answered, and fixed.** Neither of the two options the finding offered:
+  the column's configuration stays `simple`, and the fix is not a note in the
+  docs. `FullTextSearch` runs the query strictly first and retries on any of
+  its terms only when that matched nothing, so precision survives wherever it
+  was available and a plain question stops being answered with an empty
+  corpus. Stopword stripping was rejected as the mechanism — a stopword list
+  belongs to a language, and the library does not know the corpus's, which is
+  why `simple` was chosen in the first place. `SearchOptions.RequireAllTerms`
+  keeps the strict form for a caller that composed the query itself.
 
 ## Shape questions these are meant to answer
 

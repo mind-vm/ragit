@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -80,6 +81,16 @@ type SearchOptions struct {
 	// Scope has already confined, and is not itself a boundary. See
 	// [Attributes].
 	Attributes Attributes
+
+	// RequireAllTerms keeps [Processor.FullTextSearch] strict: a query whose
+	// terms do not all appear in one chunk returns nothing, instead of being
+	// retried on any of its terms. Applies to full-text search only.
+	//
+	// The default is the relaxed form because the strict one answers a
+	// user's plain question with an empty slice — see FullTextSearch. Set this
+	// where a caller composed the query itself and an empty result is the
+	// meaningful answer.
+	RequireAllTerms bool
 }
 
 // preds renders the options' own predicates, which narrow rather than confine.
@@ -174,6 +185,27 @@ func (p *Processor) VectorSearch(ctx context.Context, scope Scope, query string,
 // user typed — quoted phrases, OR, leading minus — without sanitising it into
 // tsquery syntax, and without malformed input raising an error the way
 // to_tsquery would.
+//
+// # A plain question matches on any of its terms rather than all of them
+//
+// websearch_to_tsquery ANDs every term it is given, and the 'simple'
+// configuration this column is built with has no stopword dictionary — chosen
+// deliberately, since a stopword list is a language's and this library does
+// not know the corpus's language. Together those mean "how do I reset my
+// password?" asks for a chunk containing "how" AND "do" AND "i", finds none,
+// and returns an empty slice indistinguishable from an empty corpus. That is
+// the exact shape of a question a user types.
+//
+// So a query that matched nothing on all of its terms is retried on any of
+// them, ranked, which puts the chunk matching the most of them first. The
+// relaxation is skipped when the caller wrote real search syntax — a quoted
+// phrase, a leading minus, an explicit "or" — because rewriting those would
+// change what they asked rather than widen it. [SearchOptions.RequireAllTerms]
+// turns it off entirely.
+//
+// Widening only when the strict query found nothing keeps precision where
+// precision was available: a query whose terms all appear somewhere never
+// reaches the second pass.
 func (p *Processor) FullTextSearch(ctx context.Context, scope Scope, query string, opts SearchOptions) ([]SearchResult, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
@@ -182,6 +214,45 @@ func (p *Processor) FullTextSearch(ctx context.Context, scope Scope, query strin
 		return nil, errors.New("ragit: empty query")
 	}
 
+	results, err := p.textSearch(ctx, scope, query, opts)
+	if err != nil || len(results) > 0 || opts.RequireAllTerms {
+		return results, err
+	}
+	relaxed, ok := anyTermsQuery(query)
+	if !ok {
+		return results, nil
+	}
+	return p.textSearch(ctx, scope, relaxed, opts)
+}
+
+// anyTermsQuery rewrites a query to match any of its terms instead of all of
+// them, and reports whether the rewrite applies.
+//
+// It joins the terms with websearch_to_tsquery's own "or" rather than editing
+// the compiled tsquery, so the terms are still normalized by Postgres and not
+// by guesswork here. Editing the compiled form would be worse than untidy: an
+// AND of a negation, "reset -windows", becomes "reset OR NOT windows", which
+// matches nearly the whole corpus.
+//
+// It declines a query carrying search syntax — a quoted phrase, a negation, an
+// explicit or — since the caller said what they meant, and a single-term query,
+// where any and all are the same query.
+func anyTermsQuery(query string) (string, bool) {
+	terms := strings.Fields(query)
+	if len(terms) < 2 {
+		return "", false
+	}
+	for _, t := range terms {
+		if strings.ContainsRune(t, '"') || strings.HasPrefix(t, "-") || strings.EqualFold(t, "or") {
+			return "", false
+		}
+	}
+	return strings.Join(terms, " or "), true
+}
+
+// textSearch is one pass of full-text search over an already-built query
+// string.
+func (p *Processor) textSearch(ctx context.Context, scope Scope, query string, opts SearchOptions) ([]SearchResult, error) {
 	// The 'simple' configuration must match the one the search_vector column
 	// was generated with. An 'english' column stores stemmed lexemes, and
 	// matching those against unstemmed query terms under-matches silently.

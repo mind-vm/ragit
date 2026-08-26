@@ -22,7 +22,9 @@ Upload → object storage → River job → extract → chunk → embed → pgve
 - **Embedding** through a single OpenAI-wire-compatible client, with a
   `provider|model|dimension` fingerprint per chunk.
 - **Retrieval** as two separate calls — vector and full-text — rather than one
-  fused endpoint.
+  fused endpoint. Full-text asks for all of a query's terms, then for any of
+  them if that found nothing, so a plain question is not answered with an empty
+  slice.
 - **One resumable River job** per document, checkpointed per embedding batch,
   so a retry resumes instead of re-billing the embedding provider.
 - **Or none of the front half**: a service that extracts, chunks and embeds in
@@ -94,6 +96,30 @@ A dimension nobody mentions matches only rows where it is NULL, so a corpus
 that never sets the scope columns works unchanged while one that does cannot
 leak across a boundary because a caller left a field out. Unbounded access is
 `AnyA()` / `AnyB()` — a separate predicate, never a magic value in the column.
+
+## Full-text search answers a question, not just a term list
+
+`FullTextSearch` runs the query strictly first — every term — and retries on
+any of them only when that matched nothing:
+
+```go
+results, err := processor.FullTextSearch(ctx, scope, "how do I reset my password?",
+    ragit.SearchOptions{TopK: 8})
+```
+
+That question is the one this had to fix. The `search_vector` column uses the
+`simple` text-search configuration, deliberately: a stopword list belongs to a
+language, and a library that does not know its corpus's language should not
+apply one. But `simple` has no stopwords *and* `websearch_to_tsquery` ANDs
+every term, so the query above asked for a chunk containing "how" and "do" and
+"i" — and returned an empty slice, which reads exactly like an empty corpus.
+
+Relaxing only after a strict miss keeps precision where it was available: a
+query whose terms all appear together never reaches the second pass. A query
+carrying real search syntax — a quoted phrase, a leading minus, an explicit
+`or` — is never rewritten, because widening `reset -windows` term by term would
+turn it into "reset, or anything without windows". Set
+`SearchOptions.RequireAllTerms` where an empty result is the meaningful answer.
 
 ## Filtering by your own facts
 
