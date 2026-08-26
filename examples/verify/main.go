@@ -27,11 +27,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jryannel/sqlb"
+	"github.com/mind-vm/sqlb"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/examples/fixtures"
-	"github.com/jryannel/ragit/examples/internal/bootstrap"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/examples/fixtures"
+	"github.com/mind-vm/ragit/examples/internal/bootstrap"
 )
 
 func main() {

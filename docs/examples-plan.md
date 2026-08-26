@@ -230,7 +230,7 @@ Same script, so the two are directly comparable:
 
 ## Module layout
 
-`examples/` gets its **own `go.mod`** with `replace github.com/jryannel/ragit
+`examples/` gets its **own `go.mod`** with `replace github.com/mind-vm/ragit
 => ../`. The examples need a River client, a MinIO client, and compose-only
 tooling; folding those into the library's `go.mod` would misrepresent what
 importing ragit actually costs. A consumer reading `go.mod` should see the

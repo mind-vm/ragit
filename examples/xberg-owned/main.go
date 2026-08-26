@@ -26,15 +26,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jryannel/sqlb"
+	"github.com/mind-vm/sqlb"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/chunk"
-	"github.com/jryannel/ragit/embed"
-	"github.com/jryannel/ragit/examples/fixtures"
-	"github.com/jryannel/ragit/examples/internal/bootstrap"
-	"github.com/jryannel/ragit/examples/internal/demo"
-	"github.com/jryannel/ragit/examples/xberg-owned/migrations"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/chunk"
+	"github.com/mind-vm/ragit/embed"
+	"github.com/mind-vm/ragit/examples/fixtures"
+	"github.com/mind-vm/ragit/examples/internal/bootstrap"
+	"github.com/mind-vm/ragit/examples/internal/demo"
+	"github.com/mind-vm/ragit/examples/xberg-owned/migrations"
 )
 
 // A different database from the extract-only example, because a different

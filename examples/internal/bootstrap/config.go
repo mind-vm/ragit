@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jryannel/ragit/embed"
-	"github.com/jryannel/ragit/ragitschema"
+	"github.com/mind-vm/ragit/embed"
+	"github.com/mind-vm/ragit/ragitschema"
 )
 
 // Config is everything both examples need to reach their infrastructure.

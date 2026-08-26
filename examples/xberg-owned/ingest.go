@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jryannel/sqlb"
+	"github.com/mind-vm/sqlb"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/embed"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/embed"
 )
 
 // storePrepared writes chunks that arrived already chunked and already

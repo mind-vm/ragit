@@ -5,17 +5,17 @@
 // examples end up needing to demonstrate the async path. Folding those into
 // ragit's go.mod would misrepresent what importing ragit actually costs, and
 // someone reading the library's go.mod should see its real dependency surface.
-module github.com/jryannel/ragit/examples
+module github.com/mind-vm/ragit/examples
 
 go 1.25.7
 
-replace github.com/jryannel/ragit => ../
+replace github.com/mind-vm/ragit => ../
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/jryannel/ragit v0.0.0
-	github.com/jryannel/sqlb v0.15.1
+	github.com/mind-vm/ragit v0.0.0
+	github.com/mind-vm/sqlb v0.20.0
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/riverqueue/river v0.44.1
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.44.1

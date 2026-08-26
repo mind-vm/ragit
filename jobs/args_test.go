@@ -6,7 +6,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jryannel/ragit/jobs"
+	"github.com/mind-vm/ragit/jobs"
 )
 
 // TestDeleteExpiredIsUniqueOnlyWhileInFlight pins the one thing about the

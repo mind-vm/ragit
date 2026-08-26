@@ -15,11 +15,11 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jryannel/sqlb/introspect"
-	"github.com/jryannel/sqlb/migrate"
+	"github.com/mind-vm/sqlb/introspect"
+	"github.com/mind-vm/sqlb/migrate"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/store"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/store"
 )
 
 // Env is a brought-up environment.

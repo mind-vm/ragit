@@ -7,7 +7,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/jryannel/ragit/embed"
+	"github.com/mind-vm/ragit/embed"
 )
 
 // CountingEmbedder wraps an Embedder and counts what it was asked to do.

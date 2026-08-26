@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jryannel/ragit/embed"
+	"github.com/mind-vm/ragit/embed"
 )
 
 // xbergEmbedder puts xberg's embedder behind ragit's Embedder interface, so

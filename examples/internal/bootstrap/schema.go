@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jryannel/sqlb/schema"
+	"github.com/mind-vm/sqlb/schema"
 )
 
 // The host application's own table, declared with sqlb exactly as ragit's is.

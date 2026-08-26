@@ -32,14 +32,14 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
 
-	"github.com/jryannel/ragit"
-	"github.com/jryannel/ragit/chunk"
-	"github.com/jryannel/ragit/embed"
-	"github.com/jryannel/ragit/examples/fixtures"
-	"github.com/jryannel/ragit/examples/internal/bootstrap"
-	"github.com/jryannel/ragit/examples/internal/demo"
-	"github.com/jryannel/ragit/extract"
-	"github.com/jryannel/ragit/jobs"
+	"github.com/mind-vm/ragit"
+	"github.com/mind-vm/ragit/chunk"
+	"github.com/mind-vm/ragit/embed"
+	"github.com/mind-vm/ragit/examples/fixtures"
+	"github.com/mind-vm/ragit/examples/internal/bootstrap"
+	"github.com/mind-vm/ragit/examples/internal/demo"
+	"github.com/mind-vm/ragit/extract"
+	"github.com/mind-vm/ragit/jobs"
 )
 
 // Its own tenant, so it never fights extract-only over the same corpus.

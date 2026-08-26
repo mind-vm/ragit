@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jryannel/ragit"
+	"github.com/mind-vm/ragit"
 )
 
 // Section prints a heading, so the phases of an example are separable when the
