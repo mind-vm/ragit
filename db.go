@@ -31,7 +31,8 @@ const MaintenanceGUC = "ragit.maintenance"
 // The role this connects as matters as much as the codec: PostgreSQL exempts
 // superusers and BYPASSRLS roles from row-level security entirely, so a pool
 // connected as one has ragit's tenant policies silently doing nothing. Connect
-// as an ordinary role.
+// as an ordinary role, and have [VerifyRLS] confirm it rather than assuming —
+// nothing else about that failure is visible from inside the application.
 func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

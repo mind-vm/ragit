@@ -62,7 +62,29 @@ times slower.
 SECURITY`, and PostgreSQL exempts superusers and `BYPASSRLS` roles from row-level
 security regardless. The stock `postgres` image's `POSTGRES_USER` is a
 superuser, so an application connecting as one has these policies silently
-doing nothing and is relying on the query predicates alone.
+doing nothing and is relying on the query predicates alone. Nothing about that
+is visible from inside the application, so ask:
+
+```go
+if err := ragit.VerifyRLS(ctx, pool); err != nil {
+    return err // the isolation you think you have, you do not have
+}
+```
+
+Create the role yourself — a password is a deployment's business — and let
+ragit grant it what its own tables need:
+
+```sql
+CREATE ROLE myapp LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '…';
+```
+
+```go
+err := ragit.GrantAppRole(ctx, adminPool, "myapp") // after Migrate
+```
+
+`GrantAppRole` refuses a role that bypasses RLS rather than granting to it
+pointlessly, and touches only ragit's tables — a host application's own are its
+own to grant.
 
 **Call `extract.RunIsolatedChildIfInvoked()` first in `main()`** if you use
 `IsolatedExtractor`. A library cannot re-invoke itself the way an application

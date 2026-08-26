@@ -93,9 +93,12 @@ things in it are worth reading before writing a real one:
   `ragit_documents` is what makes these examples host applications rather than
   CLI wrappers.
 - **`ensureAppRole`** creates the role the examples connect as, spelling out
-  `NOSUPERUSER NOBYPASSRLS`. Every consumer of ragit has to do this or its RLS
-  policies are decorative. Whether that should stay the consumer's job is one of
-  the open shape questions.
+  `NOSUPERUSER NOBYPASSRLS`. Creating it stays the consumer's job — a role needs
+  a password — but the grants on ragit's tables come from `ragit.GrantAppRole`,
+  which also refuses a role its policies could not confine. `Setup` then calls
+  `ragit.VerifyRLS` on the app pool before handing it back: that one line is the
+  difference between tenant isolation and the appearance of it, and it is the
+  line worth copying into a real startup path.
 
 ## This is its own Go module
 

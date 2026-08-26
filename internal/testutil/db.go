@@ -107,6 +107,29 @@ func SetupScratchDatabase(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// ConnectScratchAs connects to the database pool is connected to, as another
+// role. It exists for tests that need to observe the database as an
+// unprivileged role rather than as the owner — which is the only way to see
+// row-level security do anything at all.
+func ConnectScratchAs(t *testing.T, pool *pgxpool.Pool, role, password string) *pgxpool.Pool {
+	t.Helper()
+	database := pool.Config().ConnConfig.Database
+
+	connStr, err := rewriteURL(adminConnStr, func(u *url.URL) {
+		u.User = url.UserPassword(role, password)
+		u.Path = "/" + database
+	})
+	if err != nil {
+		t.Fatalf("testutil: build connection string for %s: %v", role, err)
+	}
+	rolePool, err := connect(context.Background(), connStr)
+	if err != nil {
+		t.Fatalf("testutil: connect to %s as %s: %v", database, role, err)
+	}
+	t.Cleanup(rolePool.Close)
+	return rolePool
+}
+
 func ensure(t *testing.T) {
 	t.Helper()
 	if testing.Short() {

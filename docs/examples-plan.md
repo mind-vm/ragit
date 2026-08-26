@@ -632,7 +632,15 @@ of.
   live in package main inside `cmd/ragit-gen`, so nothing can import them. That
   only blocks a consumer composing their own migration set rather than
   rendering one, which is why it is not urgent.
-- **Shape question 5** — the unprivileged-role SQL. Unchanged.
+- ~~**Shape question 5** — the unprivileged-role SQL.~~ **Answered, and
+  fixed**, but split rather than shipped whole. `ragit.GrantAppRole` grants
+  what ragit's own tables need and refuses a role that SUPERUSER or BYPASSRLS
+  would put outside the policies; creating the role stays the consumer's, since
+  a role needs a password and that is a deployment's business, not a library's.
+  `ragit.VerifyRLS` is the other half and the more valuable one — a startup
+  check that answers "is my tenant isolation real?", covering both the role's
+  attributes and FORCE ROW LEVEL SECURITY on the tables. `bootstrap` now calls
+  it on the app pool, which is the line a host application should copy.
 - ~~**Shape question 7** — `FullTextSearch` under the `simple` config.~~
   **Answered, and fixed.** Neither of the two options the finding offered:
   the column's configuration stays `simple`, and the fix is not a note in the

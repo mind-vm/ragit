@@ -139,6 +139,15 @@ func SetupWith(ctx context.Context, cfg Config, opts Options) (*Env, error) {
 		return nil, fmt.Errorf("connect as %s: %w", cfg.AppRole, err)
 	}
 
+	// The startup check a host application should copy. Everything about this
+	// failing is silent otherwise: the examples would run, the searches would
+	// return the right rows, and tenant isolation would be resting entirely on
+	// the query predicates.
+	if err := ragit.VerifyRLS(ctx, app); err != nil {
+		env.Close()
+		return nil, err
+	}
+
 	st, err := store.NewMinIOStore(ctx, store.MinIOConfig{
 		Endpoint:  cfg.MinIOEndpoint,
 		AccessKey: cfg.MinIOAccessKey,
@@ -262,8 +271,14 @@ $$;`, quote(cfg.AppRole), cfg.AppRole, quote(cfg.AppPassword))
 // GrantAppRole grants the application role what it needs on everything that
 // currently exists.
 //
-// Exported because "currently exists" is load-bearing and easy to get wrong.
-// GRANT ... ON ALL TABLES is not a standing rule — it expands to the tables
+// ragit's own tables come from ragit.GrantAppRole, which knows which they are
+// and refuses a role its policies could not confine — that check is the whole
+// point, since a role that bypasses RLS produces a working application with
+// imaginary tenant isolation.
+//
+// The rest is the host application's own, and stays this program's job. It is
+// exported because "currently exists" is load-bearing and easy to get wrong:
+// GRANT ... ON ALL TABLES is not a standing rule, it expands to the tables
 // present at the moment it runs. Any migration that creates a table afterwards
 // leaves the role locked out of it, with a permission error at the first query
 // rather than at deploy time. The async example hits this exactly: River's
@@ -271,6 +286,10 @@ $$;`, quote(cfg.AppRole), cfg.AppRole, quote(cfg.AppPassword))
 // to call this again. A real deployment either re-grants after every migration
 // or sets ALTER DEFAULT PRIVILEGES up front.
 func GrantAppRole(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
+	if err := ragit.GrantAppRole(ctx, pool, cfg.AppRole); err != nil {
+		return err
+	}
+
 	stmts := []string{
 		fmt.Sprintf("GRANT USAGE ON SCHEMA public TO %s", cfg.AppRole),
 		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s", cfg.AppRole),
