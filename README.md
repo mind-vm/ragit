@@ -122,7 +122,7 @@ re-stamps the chunks. Reprocessing will not fix a stale copy: the resume check
 sees identical content and skips the rewrite.
 
 **Attributes narrow; they do not confine.** An empty filter matches everything,
-which is the opposite of `Scope`'"'"'s rule and deliberate — a forgotten filter
+which is the opposite of `Scope`'s rule and deliberate — a forgotten filter
 should return more rows, not none. So do not use them for access control: a
 caller that must not see a document should be outside its scope, not merely
 failing to match a label.
