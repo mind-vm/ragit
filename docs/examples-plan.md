@@ -548,6 +548,76 @@ with ragit's catalog has to subscribe, not poll. That is an argument for the
 sink being on *every* terminal state, which it already is — and against the
 bypass in B, where it never fires at all.
 
+## What the seam changed
+
+The two changes the findings above argued for are in `main`, and
+`examples/xberg-owned` now runs on them rather than on the bypass. Measured on
+this machine, against the same compose stack:
+
+- **`ragit.ResumeChunks`** ([03bb84d](../resume.go)) — the reuse rule, exported
+  so a caller writing chunks itself can run it on its own executor, inside its
+  own transaction, with no Processor involved.
+- **`ragit.IngestPrepared`** ([8f7fe3b](../prepared.go)) — ProcessDocument's
+  sibling for a corpus ragit did not chunk or embed. It owns frictions 1, 2, 4
+  and 5: the denormalized columns, the fingerprint, the terminal state, the
+  EventSink.
+
+`ingest.go` went from 143 lines carrying five numbered frictions to 80, half of
+which is the record of what it used to be — the code left is a mapper from
+xberg's response onto `ragit.PreparedDocument`. Friction 0 is gone as a
+contract rather than a habit: `ragit.New` documents nil for extractor, chunker
+and embedder, and the methods that need them report a missing dependency
+instead of panicking on it.
+
+`embed.Space` is the shape the fingerprint took. `xberg-owned` declares it
+once and the query embedder reports the same value, so the corpus and the
+query cannot land in different spaces — friction 2 was never that formatting a
+string is hard, it was that nothing tied the two ends together.
+
+### The resume guard covers less on this path, and that is not fixable here
+
+The example's second pass now rewrites **0 of 7 chunk rows**, where the bypass
+deleted and rewrote all seven. But xberg still logs **3 extract calls and 7
+chunks re-embedded**, exactly as before.
+
+That is not a gap in the seam. On this path the embedding happens *upstream*,
+inside the same request that does the extraction, so by the time ragit is
+handed the chunks the work is already paid for. No guard inside ragit can
+unspend it. `extract-only` re-extracts on a second pass too — what it reports
+as zero is embedding calls, because there embedding is ragit's own step and
+sits behind the guard.
+
+So the honest form of the answer to shape question 6 is: moving the guard down
+was worth doing and removes the database churn, but on a pipeline where
+extraction and embedding arrive together, avoiding the upstream call needs a
+decision only the host application can make — whether the bytes changed. A
+document-level content hash is the shape that would answer it, and it is a
+different change.
+
+### It also found a bug in the library
+
+`Event.ChunkCount` was always **zero for a newly indexed document**, on the
+ProcessDocument path as much as this one. `publish` reports from the in-memory
+row, which is loaded before processing runs, and `finish` only wrote the
+database. Every subscriber has been told that freshly indexed documents have no
+chunks — on a field documented as "the number of chunks indexed". Fixed in
+8f7fe3b, with the assertion added to both paths' tests.
+
+It surfaced from wiring the EventSink into this example, which is friction 5:
+the sink that never fired here is also the one nobody had checked the contents
+of.
+
+### Still open
+
+- **Shape question 8** — `documents.embedding_model` still stores the model
+  name alone. `IngestPrepared` writes `Space.Model` for consistency with
+  ProcessDocument rather than quietly giving one path a different meaning.
+- **Shape question 4** — the `-dim` runner. Unchanged: `xberg-owned` still
+  carries its own goose runner in `migrations/`.
+- **Shape question 5** — the unprivileged-role SQL. Unchanged.
+- **Shape question 7** — `FullTextSearch` under the `simple` config.
+  Unchanged.
+
 ## Shape questions these are meant to answer
 
 Recorded up front so the examples are judged against them rather than

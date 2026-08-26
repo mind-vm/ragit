@@ -53,14 +53,10 @@ func (e *xbergEmbedder) Embed(ctx context.Context, texts []string) ([]embed.Vect
 	return out, nil
 }
 
-// Provider, Model and Dimension are the three parts of the embedding
-// fingerprint, and every one of them is asserted rather than observed.
-//
-// xberg's response says nothing about which model produced the vectors — not in
-// the chunk, not in the result metadata. So these constants are a promise this
-// program makes on xberg's behalf. Change the preset and the fingerprint keeps
-// claiming BGE-base, and the corpus straddles two embedding spaces while
-// looking like one.
-func (e *xbergEmbedder) Provider() string { return EmbeddingProvider }
-func (e *xbergEmbedder) Model() string    { return EmbeddingModel }
-func (e *xbergEmbedder) Dimension() int   { return EmbeddingDimension }
+// Provider, Model and Dimension come off the same [EmbeddingSpace] the corpus
+// is written under, so the query cannot land in a different space than the
+// chunks it is searching. See EmbeddingSpace for why all three are asserted
+// rather than observed.
+func (e *xbergEmbedder) Provider() string { return EmbeddingSpace.Provider }
+func (e *xbergEmbedder) Model() string    { return EmbeddingSpace.Model }
+func (e *xbergEmbedder) Dimension() int   { return EmbeddingSpace.Dimension }

@@ -74,9 +74,10 @@ async/                  the extract-only pipeline through River: all three
                         ragit that reads across tenants
 extract-only/           xberg extracts; ragit chunks, embeds, stores, searches
 xberg-owned/            xberg extracts+chunks+embeds; ragit stores and searches
-                        — written against the sqlb bypass, since ragit has no
-                        seam for pre-chunked, pre-embedded input. Read
-                        ingest.go: every FRICTION comment is a finding.
+                        — written first against the sqlb bypass, because ragit
+                        had no seam for pre-chunked, pre-embedded input. It has
+                        one now: this uses ragit.IngestPrepared, and ingest.go
+                        records what the five FRICTION comments used to say.
 fixtures/               three documents: markdown, csv, pdf
 internal/bootstrap/     migrations, the unprivileged role, the host app's schema
 internal/demo/          what both examples share: counters, dedupe, reporting

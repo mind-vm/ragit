@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/mind-vm/ragit/embed"
 )
 
 // Client talks to xberg's /extract endpoint asking for everything at once:
@@ -71,26 +73,33 @@ func NewClient(baseURL string, maxChars, overlap int) *Client {
 	}
 }
 
-// EmbeddingDimension is what xberg's default local ONNX preset produces:
-// BGE-base-en-v1.5, the "balanced" preset. Naming it as a constant matters
-// because it is half of the embedding fingerprint and all of the vector
-// column's width.
-const EmbeddingDimension = 768
-
-// EmbeddingModel is the preset's model, used in the fingerprint. xberg does not
-// report which model it used anywhere in the response, so this is asserted by
-// the caller rather than observed — if the preset default changes under us, the
-// fingerprint keeps claiming the old one.
-const EmbeddingModel = "bge-base-en-v1.5"
-
-// EmbeddingProvider is the other third of the fingerprint.
-const EmbeddingProvider = "xberg"
+// EmbeddingSpace is where xberg's default local ONNX preset puts its vectors:
+// BGE-base-en-v1.5 at 768 dimensions, the "balanced" preset.
+//
+// One value, used twice — it is what the corpus is written under and what the
+// query embedder in queryembed.go reports. They cannot drift apart, which is
+// the whole reason ragit takes an embed.Space rather than a fingerprint
+// string: retrieval filters on that fingerprint, and a corpus written under
+// one that disagrees with the query's returns nothing at all.
+//
+// Every field is still *asserted* rather than observed. xberg's response says
+// nothing about which model produced the vectors — not in the chunk, not in
+// the result metadata — so this is a promise this program makes on xberg's
+// behalf. Change the preset and the fingerprint keeps claiming BGE-base while
+// the corpus straddles two spaces looking like one. A struct does not fix
+// that; only xberg reporting its model would.
+var EmbeddingSpace = embed.Space{
+	Provider:  "xberg",
+	Model:     "bge-base-en-v1.5",
+	Dimension: 768,
+}
 
 // PreparedChunk is a chunk that arrives already embedded.
 //
-// It is deliberately shaped like chunk.Chunk plus a vector, which is the shape
-// ragit has no way to accept: Processor takes an Extractor returning flat text
-// and does the chunking and embedding itself.
+// It is chunk.Chunk plus a vector — the shape ragit had no way to accept when
+// this example was written, and the reason it existed. ragit.PreparedChunk is
+// now that shape; this type survives as the wire-side one, because xberg's
+// chunk_type has no home in ragit's and belongs in metadata. See ingest.go.
 type PreparedChunk struct {
 	Index       int
 	Content     string
@@ -279,9 +288,9 @@ func (c *Client) post(ctx context.Context, data []byte, filename string, cfg ext
 		if len(ch.Embedding) == 0 {
 			return nil, fmt.Errorf("chunk %d came back without an embedding; is chunking.embedding set?", i)
 		}
-		if len(ch.Embedding) != EmbeddingDimension {
+		if len(ch.Embedding) != EmbeddingSpace.Dimension {
 			return nil, fmt.Errorf("chunk %d has %d components, expected %d",
-				i, len(ch.Embedding), EmbeddingDimension)
+				i, len(ch.Embedding), EmbeddingSpace.Dimension)
 		}
 		headings := make([]string, 0, len(ch.Metadata.HeadingContext.Headings))
 		for _, h := range ch.Metadata.HeadingContext.Headings {
