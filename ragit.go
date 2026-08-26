@@ -2,7 +2,7 @@
 // document, then retrieve it. See docs/design.md for the full design and the
 // production reference implementation it's grounded in.
 //
-// Four properties are worth knowing before wiring this in.
+// Five properties are worth knowing before wiring this in.
 //
 // [Processor.ProcessDocument] is resumable. An interrupted run picks up from
 // whatever was already embedded in the current embedding space rather than
@@ -19,6 +19,11 @@
 // as well as by the query — but only if the application connects as a
 // non-superuser role, since PostgreSQL exempts superusers from RLS. See
 // [NewPool] and [WithTenant].
+//
+// The front half of the pipeline is optional. A caller whose extraction
+// service also chunks and embeds hands the result to
+// [Processor.IngestPrepared] and gets the same terminal states, events and
+// resume guard as [Processor.ProcessDocument].
 //
 // The schema is declared in ragitschema and the models here are generated from
 // it. They are exported deliberately: a consumer that needs a read ragit does
@@ -58,6 +63,11 @@ const (
 // telling a caller that a document exists but belongs to someone else is
 // itself a disclosure.
 var ErrNotFound = errors.New("ragit: document not found")
+
+// errNoEmbedder reports a query-time embedding asked of a Processor built
+// without an embedder — legitimate for a prepared-corpus pipeline, which
+// embeds nothing itself, right up until something searches by vector.
+var errNoEmbedder = errors.New("ragit: this Processor was built without an embedder and cannot embed a query")
 
 // DocumentInput describes a document to ingest.
 type DocumentInput struct {
@@ -112,6 +122,13 @@ type Processor struct {
 }
 
 // New builds a Processor. The caller owns pool/store's lifecycle.
+//
+// The extractor, chunker and embedder may be nil for a Processor that never
+// runs the front half of the pipeline itself — one that creates documents,
+// indexes them with [Processor.IngestPrepared], and searches by text. What
+// they are needed for says so: [Processor.ProcessDocument] needs all three,
+// and [Processor.VectorSearch] needs the embedder to embed the query. Both
+// report a missing dependency rather than panicking on it.
 func New(pool *pgxpool.Pool, extractor extract.Extractor, chunker *chunk.Chunker, embedder embed.Embedder, st store.Store) *Processor {
 	return &Processor{
 		pool:      pool,
@@ -208,6 +225,21 @@ func (p *Processor) CreateDocument(ctx context.Context, in DocumentInput) (uuid.
 // run and — worse — make the per-batch checkpointing meaningless, since
 // nothing would be durable until the final commit.
 func (p *Processor) ProcessDocument(ctx context.Context, documentID, tenantID uuid.UUID) error {
+	if p.extractor == nil || p.chunker == nil || p.embedder == nil {
+		return errors.New("ragit: ProcessDocument needs an extractor, a chunker and an embedder; " +
+			"a Processor built without them can still create, retrieve and IngestPrepared documents")
+	}
+
+	doc, err := p.beginProcessing(ctx, documentID, tenantID)
+	if err != nil {
+		return err
+	}
+	return p.terminal(ctx, doc, p.processDocument(ctx, doc))
+}
+
+// beginProcessing loads a document and marks it processing, so the row never
+// sits in pending while work is happening against it.
+func (p *Processor) beginProcessing(ctx context.Context, documentID, tenantID uuid.UUID) (*Document, error) {
 	var doc Document
 	err := WithTenant(ctx, p.pool, tenantID, func(db sqlb.Executor) error {
 		found, err := sqlb.Query[Document]().
@@ -229,19 +261,26 @@ func (p *Processor) ProcessDocument(ctx context.Context, documentID, tenantID uu
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return &doc, nil
+}
 
-	processErr := p.processDocument(ctx, &doc)
-	if processErr != nil {
-		msg := processErr.Error()
-		if updateErr := p.finish(ctx, &doc, StatusError, &msg, nil, nil); updateErr != nil {
-			return fmt.Errorf("ragit: mark document error (after %v): %w", processErr, updateErr)
-		}
-		p.publish(ctx, &doc, StatusError, msg)
-		return processErr
+// terminal records a failed run and reports it. A successful one has already
+// written its own terminal state, since only the work knows what it indexed.
+//
+// The underlying error is returned rather than swallowed into a nil-error
+// result: a caller needs it to decide whether the failure is worth retrying.
+func (p *Processor) terminal(ctx context.Context, doc *Document, err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+	msg := err.Error()
+	if updateErr := p.finish(ctx, doc, StatusError, &msg, nil, nil); updateErr != nil {
+		return fmt.Errorf("ragit: mark document error (after %v): %w", err, updateErr)
+	}
+	p.publish(ctx, doc, StatusError, msg)
+	return err
 }
 
 func (p *Processor) processDocument(ctx context.Context, doc *Document) error {
@@ -282,15 +321,28 @@ func (p *Processor) processDocument(ctx context.Context, doc *Document) error {
 	}
 
 	count := int32(len(chunks))
-	if err := p.finish(ctx, doc, StatusReady, nil, &count, result); err != nil {
+	done := &indexed{text: result.Text, metadata: result.Metadata, model: p.embedder.Model()}
+	if err := p.finish(ctx, doc, StatusReady, nil, &count, done); err != nil {
 		return err
 	}
 	p.publish(ctx, doc, StatusReady, "")
 	return nil
 }
 
+// indexed is what a document that reached ready carries beyond its status: the
+// text a caller can show, the extractor's metadata, and the embedding space
+// the corpus now lives in.
+//
+// The model comes in rather than off p.embedder because the corpus is not
+// always the embedder's work — see [Processor.IngestPrepared].
+type indexed struct {
+	text     string
+	metadata json.RawMessage
+	model    string
+}
+
 // finish writes the document's terminal state.
-func (p *Processor) finish(ctx context.Context, doc *Document, status string, errMsg *string, chunkCount *int32, result *extract.Result) error {
+func (p *Processor) finish(ctx context.Context, doc *Document, status string, errMsg *string, chunkCount *int32, result *indexed) error {
 	return WithTenant(ctx, p.pool, doc.TenantID, func(db sqlb.Executor) error {
 		u := sqlb.UpdateRows[Document]().
 			Set("status", status).
@@ -302,20 +354,27 @@ func (p *Processor) finish(ctx context.Context, doc *Document, status string, er
 			u = u.Set("chunk_count", *chunkCount)
 		}
 		if result != nil {
-			metadata := result.Metadata
+			metadata := result.metadata
 			if len(metadata) == 0 {
 				metadata = json.RawMessage("{}")
 			}
-			model := p.embedder.Model()
 			now := time.Now()
-			u = u.Set("text_content", &result.Text).
+			u = u.Set("text_content", &result.text).
 				Set("metadata", metadata).
-				Set("embedding_model", &model).
+				Set("embedding_model", &result.model).
 				Set("processed_at", &now)
 		}
 
 		if _, err := u.Exec(ctx, db); err != nil {
 			return fmt.Errorf("ragit: mark document %s: %w", status, err)
+		}
+
+		// Mirror onto the in-memory row, because publish reports from it. The
+		// document was loaded before any of this ran, so without the write-back
+		// a subscriber is told a freshly indexed document has zero chunks.
+		doc.Status = status
+		if chunkCount != nil {
+			doc.ChunkCount = chunkCount
 		}
 		return nil
 	})

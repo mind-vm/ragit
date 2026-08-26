@@ -122,6 +122,9 @@ func (p *Processor) VectorSearch(ctx context.Context, scope Scope, query string,
 	if query == "" {
 		return nil, errors.New("ragit: empty query")
 	}
+	if p.embedder == nil {
+		return nil, errNoEmbedder
+	}
 
 	vectors, err := p.embedder.Embed(ctx, []string{query})
 	if err != nil {
@@ -252,6 +255,9 @@ func collectResults(ctx context.Context, pool *pgxpool.Pool, scope Scope, q *sql
 func (p *Processor) CountMisalignedChunks(ctx context.Context, scope Scope) (int64, error) {
 	if err := scope.Validate(); err != nil {
 		return 0, err
+	}
+	if p.embedder == nil {
+		return 0, errNoEmbedder
 	}
 	fingerprint := embed.Fingerprint(p.embedder)
 

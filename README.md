@@ -25,6 +25,8 @@ Upload → object storage → River job → extract → chunk → embed → pgve
   fused endpoint.
 - **One resumable River job** per document, checkpointed per embedding batch,
   so a retry resumes instead of re-billing the embedding provider.
+- **Or none of the front half**: a service that extracts, chunks and embeds in
+  one call hands the result to `IngestPrepared` and keeps everything above.
 
 ## Wiring it up
 
@@ -144,14 +146,40 @@ The generated models are exported. A read ragit does not offer can be written
 with sqlb against `ragit.Document` and `ragit.Chunk` directly, inside
 `ragit.WithTenant` so the RLS policies resolve.
 
-So can a write — a caller whose chunks and vectors were produced elsewhere, by
-an extraction service that chunks and embeds in one call, inserts them the same
-way. `ragit.ResumeChunks` is the one piece of that path not worth
-re-implementing: it takes your executor, reports which chunks are already
-stored in the embedding space you name, and clears the document when any of
-them disagrees. Without it a bypassing writer re-embeds a whole document on
-every retry, which is the failure this library's resume guard exists to
-prevent — and it costs money rather than tidiness.
+## Chunks from somewhere else
+
+If your extraction service also chunks and embeds — xberg does both on the same
+`/extract` call — ragit does not need to redo either. `IngestPrepared` is
+`ProcessDocument`'s sibling: same starting point, same terminal states, same
+events, same resume guard, only the front half differs.
+
+```go
+documentID, err := processor.CreateDocument(ctx, in)
+// ... your own extract / chunk / embed ...
+err = processor.IngestPrepared(ctx, documentID, in.TenantID, ragit.PreparedDocument{
+    Text:  extracted.Text,
+    Space: embed.Space{Provider: "xberg", Model: "bge-base-en-v1.5", Dimension: 768},
+    Chunks: []ragit.PreparedChunk{
+        {Content: "...", Embedding: vec, HeadingPath: []string{"Handbook", "Accounts"}},
+    },
+})
+```
+
+A Processor for this path takes `nil` for the extractor, chunker and embedder —
+it runs none of them. `embed.Space` is a struct rather than a fingerprint
+string because retrieval filters on that fingerprint: a corpus written under a
+string that disagrees by one character with what the query embedder reports
+returns nothing, and says nothing.
+
+Writing the chunk rows yourself with sqlb also works, and stays supported. It
+means owning four things that are silent when forgotten: the scope, attribute
+and expiry columns each chunk carries denormalized; the fingerprint; the
+document's terminal state; and the `EventSink` notification. If you go that
+way, `ragit.ResumeChunks` is the one piece not worth re-implementing — it takes
+your executor, reports which chunks are already stored in the space you name,
+and clears the document when any of them disagrees. Without it a bypassing
+writer re-embeds the whole document on every retry, which costs money rather
+than tidiness.
 
 ## Development
 

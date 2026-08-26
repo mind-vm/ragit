@@ -8,7 +8,6 @@ package embed
 
 import (
 	"context"
-	"fmt"
 )
 
 // Vector is one embedding.
@@ -24,12 +23,4 @@ type Embedder interface {
 	Model() string
 	// Dimension is the embedding width stored in pgvector.
 	Dimension() int
-}
-
-// Fingerprint is the canonical identity of an embedding space:
-// provider|model|dimension. Two embedders with the same fingerprint produce
-// comparable vectors; different fingerprints do not, even if they happen to
-// share a dimension.
-func Fingerprint(e Embedder) string {
-	return fmt.Sprintf("%s|%s|%d", e.Provider(), e.Model(), e.Dimension())
 }

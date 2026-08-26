@@ -57,6 +57,9 @@ func TestEventSink_FiresOnSuccess(t *testing.T) {
 	require.NotNil(t, events[0].ScopeA)
 	require.Equal(t, scopeA, *events[0].ScopeA,
 		"a subscriber routing a notification needs the scope, not just the tenant")
+	require.NotNil(t, doc.ChunkCount)
+	require.Equal(t, int(*doc.ChunkCount), events[0].ChunkCount,
+		"the event must carry what was indexed, not what the row said before indexing")
 }
 
 // The half a success-only callback would drop. A document that failed is
