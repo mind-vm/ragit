@@ -168,6 +168,23 @@ with its schema or its migration sequence. The embedding dimension is an
 argument to the declaration rather than a literal in a shipped `.sql` file —
 `go run ./cmd/ragit-gen -dim 768` renders a set for a different width.
 
+Apply a rendered set with the same runner, not your own:
+
+```go
+//go:embed migrations/*.sql
+var schema768 embed.FS
+
+err := ragit.Migrate(ctx, pool, ragit.FromFS(schema768))
+```
+
+A hand-rolled goose runner has to name `ragit_migrations` (exported as
+`ragit.MigrationsTable`), and guessing wrong is silent — goose starts a second
+history in its own default table and re-applies migrations the database
+already has. Applying a set at one width to a database created at another is
+refused for the same reason: every rendered set carries the same version
+numbers, so goose would find them applied and report success having changed
+nothing.
+
 The generated models are exported. A read ragit does not offer can be written
 with sqlb against `ragit.Document` and `ragit.Chunk` directly, inside
 `ragit.WithTenant` so the RLS policies resolve.

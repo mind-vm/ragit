@@ -29,6 +29,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/mind-vm/ragit/internal/migrate"
+	"github.com/mind-vm/ragit/migrations"
 )
 
 // appRole is the unprivileged role tests connect as. It owns nothing and has
@@ -175,7 +176,7 @@ func startAndMigrate() (string, error) {
 
 	// Migrations run as the superuser, so it owns the tables; the app role
 	// created below is a plain grantee and RLS therefore applies to it.
-	if err := migrate.Up(ctx, adminPool); err != nil {
+	if err := migrate.Up(ctx, adminPool, migrations.FS); err != nil {
 		return "", err
 	}
 	if err := grantAppRole(ctx, adminPool); err != nil {

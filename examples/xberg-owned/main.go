@@ -75,9 +75,9 @@ func run() error {
 
 	env, err := bootstrap.SetupWith(ctx, cfg, bootstrap.Options{
 		CreateDatabase: true,
-		// ragit.Migrate would apply the library's embedded 1536-dimension
-		// schema. See migrations/migrations.go for why this exists.
-		MigrateRagit: migrations.Up,
+		// The library's embedded schema is 1536-dimension; these vectors are
+		// 768. See migrations/migrations.go.
+		RagitMigrations: migrations.FS,
 	})
 	if err != nil {
 		return err

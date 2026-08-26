@@ -394,7 +394,8 @@ Worse than expected, and it is the migration story rather than the schema:
   by a filesystem, and `internal/migrate.TableName` is not exported, so the
   consumer re-implements the goose runner and has to *remember* the
   `ragit_migrations` table name. Get it wrong and goose silently starts a second
-  history in `goose_db_version`.
+  history in `goose_db_version`. *(Fixed: `ragit.Migrate(ctx, pool,
+  ragit.FromFS(fsys))` — see "What the seam changed".)*
 - The hand-composed RLS and `tsvector` changes live in **package main** inside
   `cmd/ragit-gen`, so nothing can import them. Fine as long as the generator is
   the only entry point; a blocker for anyone wanting to compose them.
@@ -614,8 +615,23 @@ of.
 - **Shape question 8** — `documents.embedding_model` still stores the model
   name alone. `IngestPrepared` writes `Space.Model` for consistency with
   ProcessDocument rather than quietly giving one path a different meaning.
-- **Shape question 4** — the `-dim` runner. Unchanged: `xberg-owned` still
-  carries its own goose runner in `migrations/`.
+- ~~**Shape question 4** — the `-dim` runner.~~ **Answered, and fixed.**
+  `ragit.Migrate` takes `ragit.FromFS(fsys)`, so a rendered set goes through
+  ragit's own runner and version table; `ragit.MigrationsTable` is exported for
+  anyone who still wants their own. `examples/xberg-owned/migrations` is now
+  the SQL and nothing else — the runner, the duplicated table name and the
+  direct goose dependency are all gone from the example.
+
+  It also closed a hole the finding did not name: applying a set at one width
+  to a database created at another used to *succeed silently*. Every rendered
+  set carries the same version numbers, so goose found them applied and did
+  nothing, leaving the old column width behind. That is now refused with the
+  two widths in the message.
+
+  Still open from the same finding: the hand-composed RLS and tsvector changes
+  live in package main inside `cmd/ragit-gen`, so nothing can import them. That
+  only blocks a consumer composing their own migration set rather than
+  rendering one, which is why it is not urgent.
 - **Shape question 5** — the unprivileged-role SQL. Unchanged.
 - ~~**Shape question 7** — `FullTextSearch` under the `simple` config.~~
   **Answered, and fixed.** Neither of the two options the finding offered:

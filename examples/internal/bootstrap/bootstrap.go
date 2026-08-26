@@ -11,6 +11,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"strings"
 
@@ -52,11 +53,14 @@ func (e *Env) Close() {
 
 // Options vary what Setup brings up.
 type Options struct {
-	// MigrateRagit applies ragit's schema. Nil means ragit.Migrate, which
-	// carries the library's embedded 1536-dimension migrations. The
-	// xberg-owned example passes its own because its vectors are 768 wide and
-	// ragit.Migrate cannot be pointed at another set.
-	MigrateRagit func(context.Context, *pgxpool.Pool) error
+	// RagitMigrations points ragit's migration line at a set rendered at
+	// another embedding dimension by `ragit-gen -dim N`. Nil uses the
+	// library's embedded 1536-dimension set.
+	//
+	// The xberg-owned example passes its own, because its vectors are 768
+	// wide. It used to pass a whole runner — ragit.Migrate could not be
+	// pointed at another set, so the example re-implemented it.
+	RagitMigrations fs.FS
 
 	// CreateDatabase creates the database in Config.AdminDSN if it does not
 	// exist yet, by connecting to ExpectedDatabase first.
@@ -97,11 +101,11 @@ func SetupWith(ctx context.Context, cfg Config, opts Options) (*Env, error) {
 	}
 
 	// ragit's migration line, tracked in ragit_migrations.
-	migrateRagit := opts.MigrateRagit
-	if migrateRagit == nil {
-		migrateRagit = ragit.Migrate
+	var migrateOpts []ragit.MigrateOption
+	if opts.RagitMigrations != nil {
+		migrateOpts = append(migrateOpts, ragit.FromFS(opts.RagitMigrations))
 	}
-	if err := migrateRagit(ctx, admin); err != nil {
+	if err := ragit.Migrate(ctx, admin, migrateOpts...); err != nil {
 		env.Close()
 		return nil, err
 	}
