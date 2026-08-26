@@ -7,7 +7,8 @@
 // [Processor.ProcessDocument] is resumable. An interrupted run picks up from
 // whatever was already embedded in the current embedding space rather than
 // re-billing every chunk on retry — see the jobs package for running it under
-// River.
+// River. [ResumeChunks] is that guard on its own, for callers whose chunks and
+// vectors came from somewhere else.
 //
 // Every read is confined by a [Scope], whose zero value matches no rows. A
 // retrieval or catalog call that forgets its confinement returns [ErrUnscoped]
@@ -424,12 +425,7 @@ func (p *Processor) DeleteDocument(ctx context.Context, tenantID, documentID uui
 
 func (p *Processor) clearChunks(ctx context.Context, doc *Document) error {
 	return WithTenant(ctx, p.pool, doc.TenantID, func(db sqlb.Executor) error {
-		if _, err := sqlb.DeleteRows[Chunk]().
-			Where(ChunkCols.DocumentID.Eq(doc.ID), ChunkCols.TenantID.Eq(doc.TenantID)).
-			Exec(ctx, db); err != nil {
-			return fmt.Errorf("ragit: clear chunks: %w", err)
-		}
-		return nil
+		return deleteChunks(ctx, db, doc.TenantID, doc.ID)
 	})
 }
 
@@ -453,46 +449,25 @@ func (p *Processor) extractAndChunk(ctx context.Context, data []byte, filename s
 // space and persists each batch as it completes, in its own transaction, so an
 // interrupted run keeps everything it already paid for.
 //
-// A persisted chunk is reused only if its fingerprint matches the live
-// embedder AND its content matches the freshly re-chunked text at that index;
-// any mismatch wipes every chunk for the document and starts clean, so
-// embedding spaces never mix within one document.
+// Which chunks that leaves is [ResumeChunks]' decision, not this method's — the
+// guard is exported so a caller that assembled its own chunks and vectors can
+// resume on the same terms instead of re-billing a whole document.
 func (p *Processor) embedAndStore(ctx context.Context, doc *Document, chunks []chunk.Chunk) error {
 	currentFP := embed.Fingerprint(p.embedder)
 
-	fresh := make(map[int32]string, len(chunks))
-	for _, c := range chunks {
-		fresh[int32(c.Index)] = c.Content
+	contents := make([]string, len(chunks))
+	for i, c := range chunks {
+		if c.Index != i {
+			return fmt.Errorf("ragit: chunk at position %d carries index %d; chunk indices must run contiguously from zero", i, c.Index)
+		}
+		contents[i] = c.Content
 	}
 
-	embedded := make(map[int32]bool, len(chunks))
+	var reusable []bool
 	if err := WithTenant(ctx, p.pool, doc.TenantID, func(db sqlb.Executor) error {
-		existing, err := sqlb.Query[Chunk]().
-			Where(ChunkCols.DocumentID.Eq(doc.ID), ChunkCols.TenantID.Eq(doc.TenantID)).
-			OrderBy(ChunkCols.ChunkIndex.Asc()).
-			All(ctx, db)
-		if err != nil {
-			return fmt.Errorf("ragit: load existing chunks: %w", err)
-		}
-
-		stale := false
-		for _, e := range existing {
-			if e.EmbeddingFingerprint != nil && *e.EmbeddingFingerprint == currentFP && fresh[e.ChunkIndex] == e.Content {
-				embedded[e.ChunkIndex] = true
-			} else {
-				stale = true
-				break
-			}
-		}
-		if stale {
-			if _, err := sqlb.DeleteRows[Chunk]().
-				Where(ChunkCols.DocumentID.Eq(doc.ID), ChunkCols.TenantID.Eq(doc.TenantID)).
-				Exec(ctx, db); err != nil {
-				return fmt.Errorf("ragit: clear stale chunks: %w", err)
-			}
-			embedded = map[int32]bool{}
-		}
-		return nil
+		var err error
+		reusable, err = ResumeChunks(ctx, db, doc.TenantID, doc.ID, contents, currentFP)
+		return err
 	}); err != nil {
 		return err
 	}
@@ -502,7 +477,7 @@ func (p *Processor) embedAndStore(ctx context.Context, doc *Document, chunks []c
 
 		pending := make([]chunk.Chunk, 0, end-start)
 		for _, c := range chunks[start:end] {
-			if !embedded[int32(c.Index)] {
+			if !reusable[c.Index] {
 				pending = append(pending, c)
 			}
 		}

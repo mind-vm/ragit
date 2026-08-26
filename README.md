@@ -144,6 +144,15 @@ The generated models are exported. A read ragit does not offer can be written
 with sqlb against `ragit.Document` and `ragit.Chunk` directly, inside
 `ragit.WithTenant` so the RLS policies resolve.
 
+So can a write — a caller whose chunks and vectors were produced elsewhere, by
+an extraction service that chunks and embeds in one call, inserts them the same
+way. `ragit.ResumeChunks` is the one piece of that path not worth
+re-implementing: it takes your executor, reports which chunks are already
+stored in the embedding space you name, and clears the document when any of
+them disagrees. Without it a bypassing writer re-embeds a whole document on
+every retry, which is the failure this library's resume guard exists to
+prevent — and it costs money rather than tidiness.
+
 ## Development
 
 ```
