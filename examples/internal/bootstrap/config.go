@@ -118,6 +118,13 @@ func (c Config) checkDatabaseName() error {
 	}
 	name := strings.TrimPrefix(u.Path, "/")
 	if !strings.HasPrefix(name, ExpectedDatabase) {
+		// Multi-line prose in an error, which ST1005 rightly discourages,
+		// because an error is usually a fragment something else wraps. This
+		// one is not: it is the last thing the program prints before exiting,
+		// and what it has to say — how to override, and the likely cause —
+		// does not fit a fragment. Hence the guidance, and the suppression.
+		//
+		//nolint:staticcheck // ST1005: a terminal usage message, not a wrapped fragment
 		return fmt.Errorf(
 			"DATABASE_URL points at database %q, which is not %q or a suffixed sibling.\n"+
 				"  These examples create roles and tables. If that is genuinely what you want,\n"+
