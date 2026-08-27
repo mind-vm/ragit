@@ -1,4 +1,10 @@
-# Plan: two runnable examples
+# Two runnable examples: the plan, and what it settled
+
+**Status: closed, 2026-08-27.** All eight shape questions are answered, six of
+them by a change to the library. This began as a plan and is kept as the
+record — the sections below are in the order they were written, so a bullet
+that reads like an open problem is followed by what became of it. "Closing
+out" at the end is the summary.
 
 Two example applications, built to answer one question: **how much of the
 pipeline should xberg own, and does ragit's current API let a consumer choose?**
@@ -462,9 +468,10 @@ not comparable across embedding spaces; do not read anything into 0.6691 vs
    genuinely different jobs here.
 4. **Is `-dim` at generation time survivable?** *The generator is; the runner is
    not.* Cheapest real fix: export the migration runner parameterised by an
-   `fs.FS`, or at least export the version-table name.
+   `fs.FS`, or at least export the version-table name. *(Done — `ragit.FromFS`.)*
 5. **Ship the unprivileged-role SQL?** *Still open* — unchanged by B, though
-   both examples now carry the same 20 lines.
+   both examples now carry the same 20 lines. *(Since answered:
+   `ragit.GrantAppRole` and `ragit.VerifyRLS`.)*
 6. **Resume guard lower down?** *Yes, and it is the single most valuable thing
    to move.* It is the one property whose absence costs money rather than
    tidiness.
@@ -552,11 +559,12 @@ with ragit's catalog has to subscribe, not poll. That is an argument for the
 sink being on *every* terminal state, which it already is — and against the
 bypass in B, where it never fires at all.
 
-## What the seam changed
+## What the findings changed
 
-The two changes the findings above argued for are in `main`, and
-`examples/xberg-owned` now runs on them rather than on the bypass. Measured on
-this machine, against the same compose stack:
+Everything below is in `main`, and `examples/xberg-owned` now runs on it rather
+than on the bypass. Measured on this machine, against the same compose stack.
+
+The two changes the seam argument asked for came first:
 
 - **`ragit.ResumeChunks`** ([03bb84d](../resume.go)) — the reuse rule, exported
   so a caller writing chunks itself can run it on its own executor, inside its
@@ -611,25 +619,11 @@ It surfaced from wiring the EventSink into this example, which is friction 5:
 the sink that never fired here is also the one nobody had checked the contents
 of.
 
-### Still open
+### The four questions the examples did not settle themselves
 
-- ~~**Shape question 8** — `documents.embedding_model` and the fingerprint.~~
-  **Answered, and fixed**: the column is now `embedding_fingerprint` and holds
-  the whole `provider|model|dimension`, the same identity every chunk carries,
-  written the same way by both ingestion paths. Renaming rather than
-  redefining, because a column called `embedding_model` holding a fingerprint
-  is the same lie in the other direction.
+Answered after the examples were done, in the order the numbers run rather
+than the order the work happened:
 
-  **Upgrade note for an existing deployment:** the schema is regenerated in
-  place while the initial migration is still being authored, so a database
-  already at version 2 will not pick this up. One statement, and the accurate
-  value is already sitting on the chunks:
-
-  ```sql
-  ALTER TABLE ragit_documents RENAME COLUMN embedding_model TO embedding_fingerprint;
-  UPDATE ragit_documents d SET embedding_fingerprint =
-      (SELECT c.embedding_fingerprint FROM ragit_chunks c WHERE c.document_id = d.id LIMIT 1);
-  ```
 - ~~**Shape question 4** — the `-dim` runner.~~ **Answered, and fixed.**
   `ragit.Migrate` takes `ragit.FromFS(fsys)`, so a rendered set goes through
   ragit's own runner and version table; `ragit.MigrationsTable` is exported for
@@ -666,6 +660,24 @@ of.
   belongs to a language, and the library does not know the corpus's, which is
   why `simple` was chosen in the first place. `SearchOptions.RequireAllTerms`
   keeps the strict form for a caller that composed the query itself.
+- ~~**Shape question 8** — `documents.embedding_model` and the fingerprint.~~
+  **Answered, and fixed**: the column is now `embedding_fingerprint` and holds
+  the whole `provider|model|dimension`, the same identity every chunk carries,
+  written the same way by both ingestion paths. Renaming rather than
+  redefining, because a column called `embedding_model` holding a fingerprint
+  is the same lie in the other direction.
+
+  **Upgrade note for an existing deployment:** the schema is regenerated in
+  place while the initial migration is still being authored, so a database
+  already at version 2 will not pick this up. Two statements, and the accurate
+  value is already sitting on the chunks, so the backfill reads it from there
+  rather than guessing a provider:
+
+  ```sql
+  ALTER TABLE ragit_documents RENAME COLUMN embedding_model TO embedding_fingerprint;
+  UPDATE ragit_documents d SET embedding_fingerprint =
+      (SELECT c.embedding_fingerprint FROM ragit_chunks c WHERE c.document_id = d.id LIMIT 1);
+  ```
 
 ## Shape questions these are meant to answer
 
@@ -689,6 +701,63 @@ rationalised afterwards:
 8. Should `documents.embedding_model` carry the full fingerprint rather than the
    model name? *(raised by A; answered yes — the column is now
    `embedding_fingerprint`. See "What the seam changed".)*
+
+## Closing out
+
+**The original question — how much of the pipeline should xberg own — is
+answered the way §5 of [`design.md`](design.md) reasoned it would be, but for a
+sharper reason than the one on paper.** Keep chunking and embedding in Go where
+citations matter: the same handbook produced 13 chunks through ragit's chunker
+and 5 through xberg's, so a hit that cites `› Accounts › Resetting a password`
+in `extract-only` cites only `› Accounts` in `xberg-owned`. §5 argued that from
+first principles; the examples measured it, and also killed the counter-argument
+it worried about — xberg's chunker does *not* rescue citation metadata for CSV
+or PDF, because its heading context is derived from Markdown headings too.
+
+**And the API now lets a consumer choose.** That was the half in doubt. When
+these examples were written, `xberg-owned` could not be expressed against
+`Processor` at all; today it is the shipped path, and its ingest is a mapper
+onto `ragit.PreparedDocument`.
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Chunker as an interface? | **No.** B wanted no chunking step, not another one. The needed seam was earlier. |
+| 2 | A seam for prepared chunks? | **Yes** — `ragit.IngestPrepared`, with `embed.Space` naming the vectors. |
+| 3 | One Embedder or two? | **Not mandatory for ingestion.** A prepared-corpus Processor takes nil for extractor, chunker and embedder. |
+| 4 | Is `-dim` survivable? | **Now yes** — `ragit.Migrate(…, ragit.FromFS(fsys))`, `ragit.MigrationsTable`, and a refusal when the widths disagree. |
+| 5 | Ship the role SQL? | **Split** — `ragit.GrantAppRole` for the grants, `ragit.VerifyRLS` for the trap. Creating the role stays the consumer's. |
+| 6 | Resume guard lower down? | **Yes** — `ragit.ResumeChunks`, with the limit measured: it cannot unspend an upstream call. |
+| 7 | Full-text on a plain question? | **Strict first, any-term on a miss.** The `simple` config stays. |
+| 8 | Document-level fingerprint? | **Yes** — the column is `embedding_fingerprint` and carries the whole identity. |
+
+What the library gained, all of it argued for by something an example hit
+rather than by taste: `ResumeChunks`, `IngestPrepared`, `PreparedDocument`,
+`PreparedChunk`, `embed.Space`, `MigrateOption`/`FromFS`, `MigrationsTable`,
+`GrantAppRole`, `VerifyRLS`, `SearchOptions.RequireAllTerms`, and nil-tolerant
+`New` with loud errors from the methods that need what is missing.
+
+**Two real bugs, both invisible from inside the module.** The retention sweep
+could only run once per day (`examples/async`, second run). `Event.ChunkCount`
+was always zero for a newly indexed document, on every path (wiring the
+EventSink into `xberg-owned`). Neither had a symptom a unit test would have
+produced, which is the argument for examples that are host applications rather
+than CLI wrappers.
+
+### What is left
+
+- **The generator's hand-composed SQL is not importable.** `searchVectorChanges`
+  and `rlsChanges` live in package main inside `cmd/ragit-gen`. That blocks a
+  consumer *composing* their own migration set; rendering one is now handled.
+- **Skipping the upstream extract call** on a prepared pipeline needs a
+  document-level content hash. That is a host-application decision — whether
+  the bytes changed — and no guard inside ragit can make it.
+- **`extract-only` bills EdenAI on every full run.** Nothing to fix, but it is
+  why `xberg-owned` is the example to reach for when checking a change.
+
+The examples stay in the tree as the regression surface for all of this: `cd
+examples && make up && make verify`, then `go run ./xberg-owned` needs no API
+key and exercises the prepared path, the resume guard, the rendered migration
+set, `VerifyRLS`, and the fingerprint end to end.
 
 ## Sources
 
