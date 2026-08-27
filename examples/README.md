@@ -1,22 +1,30 @@
 # ragit examples
 
-Two example host applications, built to answer one question: **how much of the
-pipeline should xberg own, and does ragit's current API let a consumer choose?**
-See [`../docs/examples-plan.md`](../docs/examples-plan.md) for the full plan and
-the shape questions these are measured against.
+Host applications, built to answer one question: **how much of the pipeline
+should xberg own, and does ragit's current API let a consumer choose?**
 
-| | extraction | chunking | embedding | storage + search |
+Both halves are answered, and the second one flipped along the way — when these
+were written, `xberg-owned` could not be expressed against `Processor` at all.
+[`../docs/examples-plan.md`](../docs/examples-plan.md) is the record: the shape
+questions, what each example found, and the eight library changes that came out
+of it.
+
+| | extraction | chunking | embedding | driven by |
 |---|---|---|---|---|
-| [`extract-only/`](extract-only) | xberg | ragit | EdenAI (1536-d) | ragit |
-| [`xberg-owned/`](xberg-owned) | xberg | xberg | xberg, local ONNX (768-d) | ragit |
+| [`extract-only/`](extract-only) | xberg | ragit | EdenAI (1536-d) | `Ingest`, inline |
+| [`xberg-owned/`](xberg-owned) | xberg | xberg | xberg, local ONNX (768-d) | `IngestPrepared` |
+| [`async/`](async) | xberg | ragit | EdenAI (1536-d) | River jobs + retention sweep |
+
+The first two are the comparison, and read side by side: same infrastructure,
+same script, differing only in pipeline shape. `async` is the same pipeline as
+`extract-only` driven entirely through the queue — a third program rather than
+a flag, so it does not wreck that comparison.
 
 They use **different databases**. A vector column's width is part of its type,
 so a 768-dimension corpus and a 1536-dimension one cannot share tables:
-`extract-only` runs in `ragit_examples`, `xberg-owned` creates and uses
-`ragit_examples_768` with its own generated migration set.
-
-Both run against the same infrastructure, so the only thing that differs
-between them is pipeline shape.
+`extract-only` and `async` run in `ragit_examples`, `xberg-owned` creates and
+uses `ragit_examples_768` with its own generated migration set, applied through
+`ragit.Migrate(ctx, pool, ragit.FromFS(...))`.
 
 ## Running it
 
@@ -41,7 +49,11 @@ examples depend on fail *silently*:
   not have, and every assertion about it would still pass. So `verify` writes a
   row as one tenant and reads it back four ways with raw SQL — including once
   as the superuser, which *must* see it, because otherwise three empty results
-  prove nothing but an empty table.
+  prove nothing but an empty table. `ragit.VerifyRLS` answers the role half of
+  this from inside an application, and `bootstrap` calls it on the app pool
+  before handing it back — but `verify` keeps its own raw-SQL version, because
+  a gate that asks the library under test whether the library is confined is
+  not much of a gate.
 - **pgvector's binary codec is registered per connection.** Without it
   embeddings still move, as text, several times slower, and nothing errors.
 

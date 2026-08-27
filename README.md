@@ -5,7 +5,11 @@ it in Postgres/pgvector, and retrieve it — as a library a SaaS application
 imports rather than a service it runs.
 
 [`docs/design.md`](docs/design.md) is the real documentation: the full design,
-and the production incidents that shaped it. This file is the entry point.
+and the production incidents that shaped it. [`examples/`](examples) is three
+runnable host applications, and
+[`docs/examples-plan.md`](docs/examples-plan.md) is what building them found —
+most of the API below exists because one of them hit something. This file is
+the entry point.
 
 ## What it does
 
@@ -20,7 +24,9 @@ Upload → object storage → River job → extract → chunk → embed → pgve
 - **Chunking** in Go, Markdown-heading aware, because chunk metadata has to
   round-trip into a citation.
 - **Embedding** through a single OpenAI-wire-compatible client, with a
-  `provider|model|dimension` fingerprint per chunk.
+  `provider|model|dimension` fingerprint on every chunk and on the document —
+  the identity a search filters on, so two embedding spaces can never be
+  compared to each other.
 - **Retrieval** as two separate calls — vector and full-text — rather than one
   fused endpoint. Full-text asks for all of a query's terms, then for any of
   them if that found nothing, so a plain question is not answered with an empty
@@ -129,12 +135,13 @@ results, err := processor.FullTextSearch(ctx, scope, "how do I reset my password
     ragit.SearchOptions{TopK: 8})
 ```
 
-That question is the one this had to fix. The `search_vector` column uses the
-`simple` text-search configuration, deliberately: a stopword list belongs to a
-language, and a library that does not know its corpus's language should not
-apply one. But `simple` has no stopwords *and* `websearch_to_tsquery` ANDs
-every term, so the query above asked for a chunk containing "how" and "do" and
-"i" — and returned an empty slice, which reads exactly like an empty corpus.
+The two passes are there because of that question, which is the shape a user
+types. The `search_vector` column uses the `simple` text-search configuration,
+deliberately: a stopword list belongs to a language, and a library that does
+not know its corpus's language should not apply one. But `simple` has no
+stopwords *and* `websearch_to_tsquery` ANDs every term, so a strict-only search
+asks for a chunk containing "how" and "do" and "i", finds none, and returns an
+empty slice — which reads exactly like an empty corpus.
 
 Relaxing only after a strict miss keeps precision where it was available: a
 query whose terms all appear together never reaches the second pass. A query
@@ -246,10 +253,45 @@ and clears the document when any of them disagrees. Without it a bypassing
 writer re-embeds the whole document on every retry, which costs money rather
 than tidiness.
 
+## Runnable examples
+
+[`examples/`](examples) is three host applications against one compose stack —
+Postgres+pgvector, xberg, MinIO — differing only in which half of the pipeline
+they own, and what drives it:
+
+| | extraction | chunking | embedding | driven by |
+|---|---|---|---|---|
+| [`extract-only/`](examples/extract-only) | xberg | ragit | EdenAI (1536-d) | `Ingest`, inline |
+| [`xberg-owned/`](examples/xberg-owned) | xberg | xberg | xberg, local ONNX (768-d) | `IngestPrepared` |
+| [`async/`](examples/async) | xberg | ragit | EdenAI (1536-d) | River jobs + retention sweep |
+
+```bash
+cd examples && make up && make verify && go run ./xberg-owned
+```
+
+`xberg-owned` needs no API key — its embedding model runs in the container — so
+it is the one to reach for when checking a change. The other two embed through
+a hosted provider, which bills on a first run and, thanks to the resume guard,
+on no run after it unless you pass `-reset`.
+
+They are host applications rather than CLI wrappers on purpose: they carry
+their own table alongside ragit's, run their own migration line, and connect as
+an unprivileged role. Both bugs in
+[`docs/examples-plan.md`](docs/examples-plan.md) that no unit test would have
+produced came out of that — a retention sweep that could only run once a day,
+and an indexing event that reported zero chunks.
+
 ## Development
 
 ```
 make test        # everything, needs Docker
 make test-fast   # -short, no Docker
 make generate    # regenerate migrations and models
+```
+
+`examples/` is its own Go module with a `replace` back to the root, so it
+builds separately:
+
+```
+cd examples && go build ./...
 ```
